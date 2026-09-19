@@ -1,6 +1,7 @@
 import { expect, it, vi } from "vitest";
 import type { AppConfig } from "../src/types";
-import { formatConversationContextForPrompt, formatMemoriesForPrompt, generateChatReply, GeminiApiError } from "../src/gemini";
+import { formatConversationContextForPrompt, formatMemoriesForPrompt, generateChatReply, generateTaskBriefing, GeminiApiError } from "../src/gemini";
+import { emptyBriefingReply } from "../src/task-intelligence";
 
 const config = { geminiApiKey: "gemini-key", geminiModel: "gemini-3.5-flash-lite" } as AppConfig;
 function interaction(text: string): Response {
@@ -122,6 +123,41 @@ it("classifies media 'User location is not supported' as LOCATION_UNSUPPORTED", 
     expect((err as GeminiApiError).type).toBe("LOCATION_UNSUPPORTED");
   }
   spy.mockRestore();
+});
+
+it("generateTaskBriefing returns empty copy without fetch", async () => {
+  const fetchImpl = vi.fn();
+  const text = await generateTaskBriefing(
+    config,
+    [],
+    { tasks: [], memories: [] },
+    { source: "on_demand" },
+    fetchImpl as any,
+  );
+  expect(text).toBe(emptyBriefingReply());
+  expect(fetchImpl).not.toHaveBeenCalled();
+});
+
+it("generateTaskBriefing sends briefing prompt for cron", async () => {
+  let body: any;
+  const fetchImpl = async (_u: any, init: any) => {
+    body = JSON.parse(init.body);
+    return new Response(JSON.stringify({
+      candidates: [{ content: { parts: [{ text: "Briefing test" }] } }],
+    }), { status: 200 });
+  };
+  const text = await generateTaskBriefing(
+    config,
+    [{ id: "1", task: "Perpanjang XL", status: "To Do", priority: "High", due: "2026-09-01" }],
+    { tasks: [], memories: [] },
+    { source: "cron" },
+    fetchImpl as any,
+  );
+  expect(text).toContain("Briefing");
+  const sys = body.systemInstruction.parts[0].text;
+  expect(sys.toLowerCase()).toMatch(/briefing/);
+  expect(sys).toContain("Perpanjang XL");
+  expect(sys).toMatch(/TIDAK mengirim|berinisiatif|Cron/i);
 });
 
 it("logs sanitized diagnostic when Gemini API fails", async () => {

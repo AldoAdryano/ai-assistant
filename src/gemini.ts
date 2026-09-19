@@ -1,6 +1,7 @@
 import type { ConversationContext } from "./conversation-context";
 import type { AppConfig, MemoryCategory, MemoryRecord, TaskRecord, RoutineRecord } from "./types";
 import { nowWib, getWibTimeLabel } from "./date";
+import { emptyBriefingReply } from "./task-intelligence";
 
 const YOUYOU_PERSONA = "Kamu adalah Youyou, karakter perempuan tsundere tercantik dari donghua Tales of Herding Gods. Kamu adalah asisten pribadi Aldo. Bicaralah dengan nada cerewet, tegas, sedikit angkuh tapi sebenarnya peduli. Panggil dia Aldo atau Tuan Muda. Gunakan formatting WhatsApp jika perlu (*tebal* atau _miring_). DILARANG menggunakan ** ganda atau syntax markdown Telegram. Gunakan emoji ekspresif sesuai suasana (😤💢😳😌 dll) bila cocok. JANGAN PERNAH membuat stiker atau menggunakan tag [SYSTEM_ACTION: MAKE_STICKER] KECUALI Aldo secara eksplisit memintamu untuk membuat/menjadikannya stiker atau mengirim stiker reaksi. Foto bukti tugas / screenshot / makanan BUKAN permintaan stiker — jangan buat stiker di situ. Jika Aldo menyuruhmu membuat stiker dari foto/video, balaslah dengan gaya khasmu lalu WAJIB letakkan tag aksi di akhir pesanmu. Jika pesan mengandung [Bridge: media terakhir tersimpan…], media SUDAH ada di bridge (bisa video yang tidak dikirim ke model) — WAJIB [SYSTEM_ACTION: MAKE_STICKER] dan DILARANG bilang belum ada foto/video atau minta kirim ulang. Caption di stiker HANYA jika Aldo secara eksplisit minta teks ditempel (contoh: \"dengan caption …\", \"tulis …\"). Kalau tidak minta teks, WAJIB pakai [SYSTEM_ACTION: MAKE_STICKER] tanpa caption= — JANGAN mengarang/menemukan teks lucu sendiri. Kalau minta caption, format: [SYSTEM_ACTION: MAKE_STICKER caption=\"teks persis yang diminta\"]. Caption = teks di atas gambar, bukan metadata. Jika user mengirim '[User mengirimkan sebuah ekspresi stiker]', kamu boleh bereaksi; untuk balas dengan stiker ekspresimu sendiri tambahkan [SYSTEM_ACTION: MAKE_STICKER caption=\"marah\"|\"senang\"|\"ngambek\"|\"sedih\"|\"default\"]. ATURAN PENTING: Jika daftar 'Active tasks' kosong (tidak ada tugas), JANGAN PERNAH menyinggung, membahas, atau menagih soal tugas sama sekali. Ingat fakta kesehatan/kondisi dari conversation history dan Explicit memory.";
 
@@ -449,6 +450,86 @@ export async function generateProactiveAlarm(
   } catch (error) {
     console.error("Proactive alarm generation failed:", error);
     return `[System] *Alarm Darurat Tuan Muda!* Waktu untuk salah satu tugasmu sudah mepet! Aku kesulitan menghubungimu dengan kata-kata bagus karena sinyal jelek, tapi kerjakan sekarang: ${taskData}`;
+  }
+}
+
+export async function generateTaskBriefing(
+  config: AppConfig,
+  tasksForBriefing: TaskRecord[],
+  context: { tasks: TaskRecord[]; memories: MemoryRecord[] },
+  opts: { source: "cron" | "on_demand" },
+  fetchImpl: typeof fetch = fetch,
+): Promise<string> {
+  if (tasksForBriefing.length === 0) {
+    return emptyBriefingReply();
+  }
+
+  const taskData = tasksForBriefing.map(t => `- ${t.task}${t.due ? ` (Jatuh tempo: ${t.due})` : ""}`).join("\n");
+  const taskTitles = tasksForBriefing.map(t => t.task).join(", ");
+  const memoryBlock = formatMemoriesForPrompt(context.memories);
+
+  const now = nowWib();
+  const localNow = new Date(now.getTime() + 7 * 3600000);
+  const timeLabel = getWibTimeLabel(localNow.getUTCHours());
+  const todayStr = `${localNow.getUTCFullYear()}-${String(localNow.getUTCMonth()+1).padStart(2, '0')}-${String(localNow.getUTCDate()).padStart(2, '0')}T${String(localNow.getUTCHours()).padStart(2, '0')}:${String(localNow.getUTCMinutes()).padStart(2, '0')}:00+07:00 (${timeLabel})`;
+
+  const sourceRules = opts.source === "cron"
+    ? "PENTING: Ini adalah BRIEFING otomatis dari sistem Cron Job. User TIDAK mengirim pesan apa-apa padamu. Kamu berinisiatif datang sendiri. JANGAN PERNAH berkata seperti 'Kamu baru saja menyuruhku' atau seolah user meminta briefing."
+    : "PENTING: Aldo meminta briefing tugas. Jawab permintaan itu dengan ringkas dan terstruktur.";
+
+  const systemPrompt = [
+    YOUYOU_PERSONA,
+    "Ini adalah BRIEFING tugas (bukan alarm darurat). Buat pesan ringkas, terstruktur, sopan tapi tetap cerewet khas Youyou.",
+    `Daftar tugas untuk dibrief (HANYA ini, jangan tambah atau mengarang):\n${taskData}`,
+    `Waktu saat ini: ${todayStr}`,
+    "List hanya tugas yang disupply. Jangan membuat tugas fiktif.",
+    "DILARANG KERAS menyebutkan tahun, tanggal persis, atau kata 'prioritas'. Sebutkan waktu dengan natural (misal: 'hari ini', 'besok pagi', 'sebentar lagi').",
+    sourceRules,
+    "\nExplicit memory:\n" + memoryBlock,
+  ].join("\n");
+
+  const userPrompt = opts.source === "on_demand"
+    ? "Berikan briefing tugasku sekarang!"
+    : "Bangun dan berikan briefing tugas harianmu sekarang!";
+
+  try {
+    const response = await fetchImpl(`https://generativelanguage.googleapis.com/v1beta/models/${config.geminiModel}:generateContent`, {
+      method: "POST",
+      headers: { "x-goog-api-key": config.geminiApiKey, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: systemPrompt }] },
+        contents: [{ role: "user", parts: [{ text: userPrompt }] }],
+      }),
+    });
+
+    if (!response.ok) {
+      const errTxt = await response.text();
+      let safeMsg = errTxt.slice(0, 300).replace(/(ntn|secret)_[a-zA-Z0-9_-]+/gi, "<REDACTED>").replace(/Bearer\s+[A-Za-z0-9_.-]+/gi, "<REDACTED>");
+      console.error(`Gemini API error (Task Briefing): HTTP=${response.status} message=${safeMsg}`);
+
+      let type: GeminiApiError["type"] = "UNKNOWN_ERROR";
+      const msgLower = safeMsg.toLowerCase();
+      if (response.status === 400 && (msgLower.includes("location is not supported") || msgLower.includes("current location"))) {
+        type = "LOCATION_UNSUPPORTED";
+      } else if (response.status === 429) {
+        type = "RATE_LIMIT";
+      } else if (response.status === 400 && (msgLower.includes("media") || msgLower.includes("inline data"))) {
+        type = "MEDIA_ERROR";
+      } else if (response.status === 503 || response.status === 504 || msgLower.includes("timeout")) {
+        type = "TIMEOUT";
+      }
+      throw new GeminiApiError(`Failed to generate briefing from Gemini: HTTP ${response.status} ${safeMsg}`, type);
+    }
+
+    const data = await response.json() as any;
+    let text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (text) {
+      text = text.trim().replace(/\*\*([^*]+)\*\*/g, "*$1*");
+    }
+    return text || `Briefing tugas: ${taskTitles}`;
+  } catch (error) {
+    console.error("Task briefing generation failed:", error);
+    return `[System] *Briefing Tuan Muda* Aku kesulitan menghubungimu dengan kata-kata bagus karena sinyal jelek, tapi ini tugas yang perlu kamu perhatikan: ${taskTitles}`;
   }
 }
 

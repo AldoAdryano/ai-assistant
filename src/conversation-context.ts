@@ -57,8 +57,12 @@ export function applyTopicSwitch(
   newTopic: string,
   now = Date.now(),
 ): ConversationContext {
+  const trimmed = newTopic.trim();
+  if (prev && prev.currentTopic.trim().toLowerCase() === trimmed.toLowerCase()) {
+    return prev;
+  }
   return {
-    currentTopic: newTopic.trim(),
+    currentTopic: trimmed,
     previousTopic: prev?.currentTopic ?? null,
     activeTaskHint: null,
     updatedAt: now,

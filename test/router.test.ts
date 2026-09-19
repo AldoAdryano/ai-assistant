@@ -678,6 +678,34 @@ describe("handleUserMessage (AI-Driven)", () => {
     expect(d.saveConversationContext).not.toHaveBeenCalled();
   });
 
+  it("phrase switch then set_conversation_topic in same turn keeps original previousTopic", async () => {
+    const prior = {
+      currentTopic: "drone FPV",
+      previousTopic: null as string | null,
+      activeTaskHint: "beli drone",
+      updatedAt: 1,
+    };
+    const d = deps({
+      getConversationContext: vi.fn(async () => prior),
+      generateChatReply: vi.fn()
+        .mockResolvedValueOnce({
+          type: "function_calls",
+          calls: [{ name: "set_conversation_topic", args: { topic: "belanja kaos", reason: "user switched" } }],
+        })
+        .mockResolvedValue({ type: "text", text: "Ok belanja kaos" }) as any,
+    });
+    await handleUserMessage(env, 123, config, { text: "pindah topik belanja" }, d);
+    expect(d.saveConversationContext).toHaveBeenCalledTimes(1);
+    expect(d.saveConversationContext).toHaveBeenCalledWith(
+      env,
+      123,
+      expect.objectContaining({
+        currentTopic: "belanja",
+        previousTopic: "drone FPV",
+      }),
+    );
+  });
+
   it("set_conversation_topic tool saves conversation context", async () => {
     const prior = {
       currentTopic: "drone FPV",

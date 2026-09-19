@@ -141,12 +141,14 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
     }
 
     let conversationContext: ConversationContext | null = null;
+    let topicSwitchedThisTurn = false;
     if (!isGroup) {
       conversationContext = await deps.getConversationContext(env, userId);
       const detectedSwitch = detectExplicitTopicSwitch(normalizedText);
       if (detectedSwitch) {
         conversationContext = applyTopicSwitch(conversationContext, detectedSwitch.topic);
         await deps.saveConversationContext(env, userId, conversationContext);
+        topicSwitchedThisTurn = true;
       }
     }
 
@@ -550,8 +552,12 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
                   replyMessages.push("[System]: topic missing; provide a non-empty topic.");
                   break;
                 }
-                conversationContext = applyTopicSwitch(conversationContext, topic);
-                await deps.saveConversationContext(env, userId, conversationContext);
+                const sameAsCurrent =
+                  conversationContext?.currentTopic.trim().toLowerCase() === topic.toLowerCase();
+                if (!topicSwitchedThisTurn && !sameAsCurrent) {
+                  conversationContext = applyTopicSwitch(conversationContext, topic);
+                  await deps.saveConversationContext(env, userId, conversationContext);
+                }
                 topicUpdatedThisTurn = true;
                 replyMessages.push(`[System]: topic updated to ${topic}`);
                 break;

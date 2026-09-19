@@ -84,4 +84,14 @@ describe("applyTopicSwitch", () => {
   it("trims new topic", () => {
     expect(applyTopicSwitch(null, "  belanja  ", now).currentTopic).toBe("belanja");
   });
+
+  it("returns prev unchanged when new topic matches current (case-insensitive)", () => {
+    const prev: ConversationContext = {
+      currentTopic: "drone FPV",
+      previousTopic: "laprak",
+      activeTaskHint: null,
+      updatedAt: now - 60_000,
+    };
+    expect(applyTopicSwitch(prev, "drone fpv", now)).toBe(prev);
+  });
 });

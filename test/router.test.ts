@@ -3,6 +3,7 @@ import type { AppConfig, Env, MemoryRecord, TaskRecord } from "../src/types";
 import { handleUserMessage, type RouterDeps } from "../src/router";
 import { NotionRejectionError } from "../src/notion";
 import { GeminiApiError } from "../src/gemini";
+import { emptyBriefingReply } from "../src/task-intelligence";
 
 const config = {} as AppConfig;
 const env = {} as Env;
@@ -38,6 +39,7 @@ function deps(overrides: Partial<RouterDeps> = {}): RouterDeps {
     getConversationContext: vi.fn(async () => null),
     saveConversationContext: vi.fn(async () => undefined),
     clearConversationContext: vi.fn(async () => undefined),
+    generateTaskBriefing: vi.fn(async () => "Briefing AI"),
     ...overrides,
   };
 }
@@ -155,7 +157,7 @@ describe("handleUserMessage (AI-Driven)", () => {
         { id: "1", task: "Tugas satu", status: "To Do", priority: "High", due: "2026-09-05" }
       ]) as any
     });
-    const reply = await handleUserMessage(env, 123, config, { text: "Apa tugas saya?" }, d);
+    const reply = await handleUserMessage(env, 123, config, { text: "Cek status tugas aktif di Notion" }, d);
     expect(reply).toContain("1. [High] Tugas satu — 2026-09-05");
   });
 
@@ -747,5 +749,52 @@ describe("handleUserMessage (AI-Driven)", () => {
     }, d);
     expect(d.getConversationContext).not.toHaveBeenCalled();
     expect(d.saveConversationContext).not.toHaveBeenCalled();
+  });
+
+  it("DM briefing short-circuits to generateTaskBriefing with Filter-B subset", async () => {
+    const overdue = { id: "o1", task: "Overdue A", status: "To Do", priority: "Medium", due: "2026-09-01" } as TaskRecord;
+    const far = { id: "f1", task: "Far B", status: "To Do", priority: "Medium", due: "2026-12-01" } as TaskRecord;
+    const memories = [{ id: "m1", key: "kota", value: "Jakarta", category: "Preference" }] as MemoryRecord[];
+    const d = deps({
+      listActiveTasks: vi.fn(async () => [overdue, far]),
+      listMemoryContext: vi.fn(async () => memories),
+      generateTaskBriefing: vi.fn(async () => "Ringkasan tugas"),
+    });
+    const reply = await handleUserMessage(env, 123, config, { text: "briefing" }, d);
+    expect(d.generateChatReply).not.toHaveBeenCalled();
+    expect(d.generateTaskBriefing).toHaveBeenCalledTimes(1);
+    expect(d.generateTaskBriefing).toHaveBeenCalledWith(
+      config,
+      [overdue],
+      { tasks: [overdue, far], memories },
+      { source: "on_demand" },
+    );
+    expect(reply).toBe("Ringkasan tugas");
+  });
+
+  it("DM briefing with empty Filter B returns emptyBriefingReply without Gemini", async () => {
+    const far = { id: "f1", task: "Far B", status: "To Do", priority: "Medium", due: "2026-12-01" } as TaskRecord;
+    const d = deps({
+      listActiveTasks: vi.fn(async () => [far]),
+      generateTaskBriefing: vi.fn(async () => "should not run"),
+    });
+    const reply = await handleUserMessage(env, 123, config, { text: "briefing" }, d);
+    expect(reply).toBe(emptyBriefingReply());
+    expect(d.generateChatReply).not.toHaveBeenCalled();
+    expect(d.generateTaskBriefing).not.toHaveBeenCalled();
+  });
+
+  it("group briefing does not short-circuit to generateTaskBriefing", async () => {
+    const d = deps({
+      generateChatReply: vi.fn(async () => ({ type: "text", text: "Hai di grup" })) as any,
+      generateTaskBriefing: vi.fn(async () => "should not run"),
+    });
+    const reply = await handleUserMessage(env, "wa-group:120@g.us", config, {
+      text: "briefing",
+      chatContext: "group",
+    }, d);
+    expect(d.generateTaskBriefing).not.toHaveBeenCalled();
+    expect(d.generateChatReply).toHaveBeenCalled();
+    expect(reply).toBe("Hai di grup");
   });
 });

@@ -1,6 +1,7 @@
-import { generateChatReply, GeminiApiError } from "./gemini";
+import { generateChatReply, generateTaskBriefing, GeminiApiError } from "./gemini";
 import type { ChatReply } from "./gemini";
 import { NotionRejectionError, NotionUnknownError, createNote, createTask, listActiveTasks, getAllTasks, getAllNotes, listMemoryContext, recallMemory, upsertMemory, getAllMemory, updateTask, archiveTask, addRoutine } from "./notion";
+import { detectBriefingRequest, selectBriefingTasks, emptyBriefingReply } from "./task-intelligence";
 import {
   getInteractionId,
   saveInteractionId,
@@ -51,12 +52,14 @@ export interface RouterDeps {
   getConversationContext: typeof getConversationContext;
   saveConversationContext: typeof saveConversationContext;
   clearConversationContext: typeof clearConversationContext;
+  generateTaskBriefing: typeof generateTaskBriefing;
 }
 const defaultDeps: RouterDeps = {
   createNote, createTask, listActiveTasks, getAllTasks, getAllNotes, upsertMemory, recallMemory, listMemoryContext, getAllMemory, updateTask, archiveTask, addRoutine,
   generateChatReply, parseIndonesianDeadline, parseIndonesianNaturalDate, getInteractionId, saveInteractionId, getChatLog, saveChatLog, clearMemory,
   getPendingDelete, savePendingDelete, clearPendingDelete, getPendingMemory, savePendingMemory, clearPendingMemory,
   getConversationContext, saveConversationContext, clearConversationContext,
+  generateTaskBriefing,
 };
 const HELP = ["Perintah V1 (AI-Driven):", "• /start atau /help", "• Kirim apa saja, AI akan mengurus sisanya (catatan, tugas, memori)."].join("\n");
 
@@ -138,6 +141,14 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
           return `Ok, sudah aku ingat *${pendingMemory.key}*.`;
         }
       }
+    }
+
+    if (!isGroup && detectBriefingRequest(normalizedText)) {
+      const tasks = await deps.listActiveTasks(config);
+      const memories = await deps.listMemoryContext(config);
+      const selected = selectBriefingTasks(tasks, Date.now());
+      if (selected.length === 0) return emptyBriefingReply();
+      return deps.generateTaskBriefing(config, selected, { tasks, memories }, { source: "on_demand" });
     }
 
     let conversationContext: ConversationContext | null = null;

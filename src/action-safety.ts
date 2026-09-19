@@ -29,11 +29,11 @@ export function userExplicitMultiCreate(userText: string): boolean {
   return false;
 }
 
-export function filterCreateTaskCalls(
-  calls: Array<{ name: string; args: Record<string, unknown> }>,
+export function filterCreateTaskCalls<T extends { name: string; args: any }>(
+  calls: T[],
   userText: string,
 ): {
-  allowed: typeof calls;
+  allowed: T[];
   blocked: boolean;
   clarifyMessage?: string;
 } {

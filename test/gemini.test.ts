@@ -224,6 +224,91 @@ it("generateTaskBriefing labels tasks with projectName or Tanpa project", async 
   expect(sys).toContain("Kelompokkan secara natural per project bila ada.");
 });
 
+it("includes Projects CRUD tools when projectsEnabled and not group", async () => {
+  let requestBody: any;
+  const fakeFetch: typeof fetch = async (_input, init) => {
+    requestBody = JSON.parse(String(init?.body));
+    return interaction("Siap.");
+  };
+  await generateChatReply(config, { text: "Buat project Mars" }, {
+    tasks: [],
+    memories: [],
+    projectsEnabled: true,
+  }, undefined, fakeFetch);
+
+  const toolNames = requestBody.tools[0].functionDeclarations.map((t: { name: string }) => t.name);
+  expect(toolNames).toContain("create_notion_project");
+  expect(toolNames).toContain("update_notion_project");
+  expect(toolNames).toContain("delete_notion_project");
+
+  const create = requestBody.tools[0].functionDeclarations.find(
+    (t: { name: string }) => t.name === "create_notion_project",
+  );
+  expect(create.parameters.required).toEqual(["name"]);
+  expect(create.parameters.properties).toMatchObject({
+    name: { type: "STRING" },
+    area: { type: "STRING" },
+    deadline: { type: "STRING" },
+  });
+
+  const update = requestBody.tools[0].functionDeclarations.find(
+    (t: { name: string }) => t.name === "update_notion_project",
+  );
+  expect(update.parameters.required).toEqual(["project"]);
+  expect(update.parameters.properties).toMatchObject({
+    project: { type: "STRING" },
+    new_name: { type: "STRING" },
+    area: { type: "STRING" },
+    deadline: { type: "STRING" },
+  });
+
+  const del = requestBody.tools[0].functionDeclarations.find(
+    (t: { name: string }) => t.name === "delete_notion_project",
+  );
+  expect(del.parameters.required).toEqual(["project"]);
+  expect(del.parameters.properties).toMatchObject({
+    project: { type: "STRING" },
+  });
+
+  const systemText = requestBody.systemInstruction.parts[0].text;
+  expect(systemText).toMatch(/LIFE OS Projects/i);
+  expect(systemText).toMatch(/delete_notion_project|konfirmasi|confirm/i);
+  expect(systemText).toMatch(/Goals|jangan.*Goal|do not invent Goals/i);
+});
+
+it("omits Projects CRUD tools when projectsEnabled is false or absent", async () => {
+  let requestBody: any;
+  const fakeFetch: typeof fetch = async (_input, init) => {
+    requestBody = JSON.parse(String(init?.body));
+    return interaction("Siap.");
+  };
+  await generateChatReply(config, { text: "Buat project Mars" }, {
+    tasks: [],
+    memories: [],
+  }, undefined, fakeFetch);
+
+  const toolNames = requestBody.tools[0].functionDeclarations.map((t: { name: string }) => t.name);
+  expect(toolNames).not.toContain("create_notion_project");
+  expect(toolNames).not.toContain("update_notion_project");
+  expect(toolNames).not.toContain("delete_notion_project");
+});
+
+it("omits Projects CRUD tools in group even when projectsEnabled", async () => {
+  let requestBody: any;
+  const fakeFetch: typeof fetch = async (_input, init) => {
+    requestBody = JSON.parse(String(init?.body));
+    return interaction("Halo grup!");
+  };
+  await generateChatReply(config, { text: "Buat project Mars" }, {
+    tasks: [],
+    memories: [],
+    chatContext: "group",
+    projectsEnabled: true,
+  }, undefined, fakeFetch);
+
+  expect(requestBody.tools).toBeUndefined();
+});
+
 it("logs sanitized diagnostic when Gemini API fails", async () => {
   const fakeFetch: typeof fetch = async () => new Response(JSON.stringify({
     error: { code: 400, message: "Example Gemini diagnostic message secret_123", status: "INVALID_ARGUMENT" }

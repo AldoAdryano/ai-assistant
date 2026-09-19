@@ -5,9 +5,11 @@ export type PendingDelete = {
   createdAt: number;
 };
 
+/** Pending delete confirmations older than this are ignored and cleared. */
+export const PENDING_DELETE_FRESH_MS = 10 * 60 * 1000;
+
 const WORD_NUMBERS = ["dua", "tiga", "empat", "lima", "enam", "tujuh", "delapan", "sembilan", "sepuluh"];
 
-const POSITIVE_CONFIRM = /\b(ya|yakin|hapus|boleh|ok|oke|lanjutkan)\b/i;
 const NEGATIVE_CONFIRM = /\b(tidak|jangan|batal|cancel)\b/i;
 
 const CLARIFY_MULTI_CREATE =
@@ -15,6 +17,10 @@ const CLARIFY_MULTI_CREATE =
 
 export function userExplicitMultiCreate(userText: string): boolean {
   const lower = userText.trim().toLowerCase();
+
+  if (/\b(beberapa|pisah|terpisah|banyak)\b/.test(lower)) {
+    return true;
+  }
 
   if (/\b(?:buat|bikin|create|add)\s+\d+\s+tugas\b/.test(lower)) {
     return true;
@@ -55,10 +61,36 @@ export function filterCreateTaskCalls<T extends { name: string; args: any }>(
   };
 }
 
+/** Short, confirmation-ish replies only — not bare "hapus" or long unrelated chat. */
 export function isPositiveDeleteConfirm(userText: string): boolean {
-  return POSITIVE_CONFIRM.test(userText.trim());
+  const text = userText.trim().toLowerCase();
+  if (/^(ya|yakin|boleh|ok|oke|lanjutkan)([!.]*)?$/i.test(text)) {
+    return true;
+  }
+  // Short "ya …" / "yakin …" (e.g. "ya hapus") — not long unrelated messages
+  if (/^(ya|yakin)\b/i.test(text) && text.length < 40) {
+    return true;
+  }
+  return false;
 }
 
 export function isNegativeDeleteConfirm(userText: string): boolean {
   return NEGATIVE_CONFIRM.test(userText.trim());
+}
+
+export function isPendingDeleteFresh(pending: PendingDelete, now = Date.now()): boolean {
+  return now - pending.createdAt <= PENDING_DELETE_FRESH_MS;
+}
+
+const TITLE_MAX = 40;
+
+export function truncateTitle(title: string, max = TITLE_MAX): string {
+  const t = title.trim().replace(/\s+/g, " ");
+  if (t.length <= max) return t;
+  return t.slice(0, max - 1) + "…";
+}
+
+/** Build a short summary of up to 3 titles for the confirm prompt. */
+export function buildDeleteTitleSummary(titles: string[]): string {
+  return titles.slice(0, 3).map((t) => truncateTitle(t)).join(", ");
 }

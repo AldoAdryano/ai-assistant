@@ -189,10 +189,16 @@ describe("handleUserMessage (AI-Driven)", () => {
     expect(d.savePendingDelete).toHaveBeenCalledWith(
       env,
       123,
-      expect.objectContaining({ kind: "tasks", ids: ["task-1", "task-2"] }),
+      expect.objectContaining({
+        kind: "tasks",
+        ids: ["task-1", "task-2"],
+        summary: expect.stringContaining("hapus tugas 1"),
+      }),
     );
     expect(reply).toMatch(/yakin|ya|jangan/i);
     expect(reply).toMatch(/2/);
+    expect(reply).toContain("hapus tugas 1");
+    expect(reply).not.toMatch(/\(\d+ tugas\)/);
   });
 
   it("archives pending delete when user confirms with ya", async () => {
@@ -200,7 +206,7 @@ describe("handleUserMessage (AI-Driven)", () => {
       getPendingDelete: vi.fn(async () => ({
         kind: "tasks" as const,
         ids: ["task-1", "task-2"],
-        summary: "2 tugas",
+        summary: "hapus tugas 1, hapus tugas 2",
         createdAt: Date.now(),
       })),
     });
@@ -218,7 +224,7 @@ describe("handleUserMessage (AI-Driven)", () => {
       getPendingDelete: vi.fn(async () => ({
         kind: "tasks" as const,
         ids: ["task-1"],
-        summary: "1 tugas",
+        summary: "hapus tugas 1",
         createdAt: Date.now(),
       })),
     });
@@ -227,6 +233,121 @@ describe("handleUserMessage (AI-Driven)", () => {
     expect(d.archiveTask).not.toHaveBeenCalled();
     expect(d.clearPendingDelete).toHaveBeenCalledWith(env, 123);
     expect(reply).toMatch(/batal|cancel|tidak dihapus|ok/i);
+  });
+
+  it("cancels pending delete on jangan hapus without archiving", async () => {
+    const d = deps({
+      getPendingDelete: vi.fn(async () => ({
+        kind: "tasks" as const,
+        ids: ["task-1", "task-2"],
+        summary: "A, B",
+        createdAt: Date.now(),
+      })),
+    });
+    const reply = await handleUserMessage(env, 123, config, { text: "jangan hapus" }, d);
+    expect(d.archiveTask).not.toHaveBeenCalled();
+    expect(d.clearPendingDelete).toHaveBeenCalledWith(env, 123);
+    expect(d.generateChatReply).not.toHaveBeenCalled();
+    expect(reply).toMatch(/batal|tidak dihapus|ok/i);
+  });
+
+  it("stale pending delete does not archive on ya and falls through to Gemini", async () => {
+    const d = deps({
+      getPendingDelete: vi.fn(async () => ({
+        kind: "tasks" as const,
+        ids: ["task-1"],
+        summary: "A",
+        createdAt: Date.now() - 11 * 60 * 1000,
+      })),
+      generateChatReply: vi.fn(async () => ({ type: "text", text: "Halo dari Gemini" })) as any,
+    });
+    const reply = await handleUserMessage(env, 123, config, { text: "ya" }, d);
+    expect(d.archiveTask).not.toHaveBeenCalled();
+    expect(d.clearPendingDelete).toHaveBeenCalledWith(env, 123);
+    expect(d.generateChatReply).toHaveBeenCalled();
+    expect(reply).toBe("Halo dari Gemini");
+  });
+
+  it("keeps pending when all archives fail", async () => {
+    const d = deps({
+      getPendingDelete: vi.fn(async () => ({
+        kind: "tasks" as const,
+        ids: ["task-1", "task-2"],
+        summary: "A, B",
+        createdAt: Date.now(),
+      })),
+      archiveTask: vi.fn(async () => {
+        throw new Error("notion down");
+      }),
+    });
+    const reply = await handleUserMessage(env, 123, config, { text: "ya" }, d);
+    expect(d.clearPendingDelete).not.toHaveBeenCalled();
+    expect(reply).toMatch(/gagal/i);
+    expect(reply).toMatch(/2/);
+  });
+
+  it("reports partial archive success and clears pending", async () => {
+    let calls = 0;
+    const d = deps({
+      getPendingDelete: vi.fn(async () => ({
+        kind: "tasks" as const,
+        ids: ["task-1", "task-2"],
+        summary: "A, B",
+        createdAt: Date.now(),
+      })),
+      archiveTask: vi.fn(async () => {
+        calls++;
+        if (calls === 1) return;
+        throw new Error("fail");
+      }),
+    });
+    const reply = await handleUserMessage(env, 123, config, { text: "ya" }, d);
+    expect(d.clearPendingDelete).toHaveBeenCalledWith(env, 123);
+    expect(reply).toMatch(/berhasil menghapus 1/i);
+    expect(reply).toMatch(/gagal 1/i);
+  });
+
+  it("only first delete tool in a turn creates pending", async () => {
+    const d = deps({
+      generateChatReply: vi.fn()
+        .mockResolvedValueOnce({
+          type: "function_calls",
+          calls: [
+            { name: "delete_notion_tasks", args: { keywords: ["ALL"] } },
+            { name: "delete_notion_notes", args: { keywords: ["ALL"] } },
+          ],
+        }) as any,
+      getAllTasks: vi.fn(async () => [
+        { id: "task-1", task: "Tugas A", status: "To Do", priority: "High", due: undefined },
+      ]) as any,
+      getAllNotes: vi.fn(async () => [
+        { id: "note-1", title: "Catatan B" },
+      ]) as any,
+    });
+    const reply = await handleUserMessage(env, 123, config, { text: "hapus semua" }, d);
+    expect(d.savePendingDelete).toHaveBeenCalledTimes(1);
+    expect(d.savePendingDelete).toHaveBeenCalledWith(
+      env,
+      123,
+      expect.objectContaining({ kind: "tasks", summary: expect.stringContaining("Tugas A") }),
+    );
+    expect(reply).toMatch(/satu batch|konfirmasi/i);
+  });
+
+  it("allows multi-create when user replies beberapa after clarify", async () => {
+    const d = deps({
+      generateChatReply: vi.fn()
+        .mockResolvedValueOnce({
+          type: "function_calls",
+          calls: [1, 2, 3].map((i) => ({
+            name: "create_notion_task",
+            args: { title: `Item ${i}`, priority: "Medium" },
+          })),
+        }) as any,
+    });
+    const reply = await handleUserMessage(env, 123, config, { text: "beberapa" }, d);
+    expect(d.createTask).toHaveBeenCalledTimes(3);
+    expect(reply).toContain("Item 1");
   });
 
   it("blocks multiple create_notion_task in one turn without explicit multi", async () => {

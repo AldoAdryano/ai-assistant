@@ -2,7 +2,13 @@ import { generateChatReply, GeminiApiError } from "./gemini";
 import type { ChatReply } from "./gemini";
 import { NotionRejectionError, NotionUnknownError, createNote, createTask, listActiveTasks, getAllTasks, getAllNotes, listMemoryContext, recallMemory, upsertMemory, getAllMemory, updateTask, archiveTask, addRoutine } from "./notion";
 import { getInteractionId, saveInteractionId, getChatLog, saveChatLog, clearMemory, getPendingDelete, savePendingDelete, clearPendingDelete, CHAT_LOG_MAX_CHARS } from "./state";
-import { filterCreateTaskCalls, isPositiveDeleteConfirm, isNegativeDeleteConfirm } from "./action-safety";
+import {
+  buildDeleteTitleSummary,
+  filterCreateTaskCalls,
+  isPendingDeleteFresh,
+  isPositiveDeleteConfirm,
+  isNegativeDeleteConfirm,
+} from "./action-safety";
 import type { PendingDelete } from "./action-safety";
 import { parseIndonesianDeadline, parseIndonesianNaturalDate } from "./date";
 import type { AppConfig, Env } from "./types";
@@ -24,6 +30,12 @@ export interface RouterDeps {
 const defaultDeps: RouterDeps = { createNote, createTask, listActiveTasks, getAllTasks, getAllNotes, upsertMemory, recallMemory, listMemoryContext, getAllMemory, updateTask, archiveTask, addRoutine, generateChatReply, parseIndonesianDeadline, parseIndonesianNaturalDate, getInteractionId, saveInteractionId, getChatLog, saveChatLog, clearMemory, getPendingDelete, savePendingDelete, clearPendingDelete };
 const HELP = ["Perintah V1 (AI-Driven):", "• /start atau /help", "• Kirim apa saja, AI akan mengurus sisanya (catatan, tugas, memori)."].join("\n");
 
+const DELETE_TOOL_NAMES = new Set([
+  "delete_notion_tasks",
+  "delete_notion_notes",
+  "delete_notion_memory",
+]);
+
 function deleteKindLabel(kind: PendingDelete["kind"]): string {
   if (kind === "notes") return "catatan";
   if (kind === "memory") return "memori";
@@ -42,29 +54,42 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
     return "Memori percakapan berhasil dihapus! Asisten siap menerima instruksi baru dari awal.";
   }
 
-  if (!isGroup) {
-    const pending = await deps.getPendingDelete(env, userId);
-    if (pending && isPositiveDeleteConfirm(normalizedText)) {
-      let successCount = 0;
-      for (const id of pending.ids) {
-        try {
-          await deps.archiveTask(config, id);
-          successCount++;
-        } catch {
-          // continue archiving remaining ids
+  try {
+    // Pending-delete confirm/cancel (inside try so KV errors get soft fallback)
+    if (!isGroup) {
+      const pending = await deps.getPendingDelete(env, userId);
+      if (pending) {
+        if (!isPendingDeleteFresh(pending)) {
+          await deps.clearPendingDelete(env, userId);
+          // fall through to Gemini
+        } else if (isNegativeDeleteConfirm(normalizedText)) {
+          await deps.clearPendingDelete(env, userId);
+          return "Ok, batal hapus. Tidak ada yang dihapus.";
+        } else if (isPositiveDeleteConfirm(normalizedText)) {
+          let successCount = 0;
+          let failCount = 0;
+          for (const id of pending.ids) {
+            try {
+              await deps.archiveTask(config, id);
+              successCount++;
+            } catch {
+              failCount++;
+            }
+          }
+          const label = deleteKindLabel(pending.kind);
+          if (successCount === 0) {
+            // Keep pending so user can retry
+            return `Gagal menghapus ${failCount} ${label}. Balas "ya" lagi untuk coba ulang, atau "jangan" untuk batal.`;
+          }
+          await deps.clearPendingDelete(env, userId);
+          if (failCount > 0) {
+            return `Berhasil menghapus ${successCount} ${label}, gagal ${failCount}.`;
+          }
+          return `Berhasil menghapus ${successCount} ${label}.`;
         }
       }
-      await deps.clearPendingDelete(env, userId);
-      const label = deleteKindLabel(pending.kind);
-      return `Berhasil menghapus ${successCount} ${label}.`;
     }
-    if (pending && isNegativeDeleteConfirm(normalizedText)) {
-      await deps.clearPendingDelete(env, userId);
-      return "Ok, batal hapus. Tidak ada yang dihapus.";
-    }
-  }
 
-  try {
     const [tasks, memories, previousInteractionId, chatLog] = isGroup
       ? [[], [], null as string | null, await deps.getChatLog(env, userId)]
       : await Promise.all([
@@ -183,6 +208,7 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
           replyMessages.push(filtered.clarifyMessage);
         }
         const callsToProcess = filtered.allowed;
+        let pendingDeleteSavedThisTurn = false;
         for (const call of callsToProcess) {
           const callSignature = call.name + JSON.stringify(call.args);
           if (executedTools.has(callSignature)) {
@@ -190,6 +216,13 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
             continue;
           }
           executedTools.add(callSignature);
+
+          if (DELETE_TOOL_NAMES.has(call.name) && pendingDeleteSavedThisTurn) {
+            replyMessages.push(
+              "Satu batch konfirmasi hapus saja per giliran. Konfirmasi yang pertama dulu (balas \"ya\" atau \"jangan\"), baru hapus batch lain.",
+            );
+            continue;
+          }
 
           try {
             switch (call.name) {
@@ -288,10 +321,10 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
                 }
                 
                 const allTasks = await deps.getAllTasks(config);
-                let matchedIds: string[] = [];
+                let matched: typeof allTasks = [];
                 
                 if (keywords.includes("ALL")) {
-                  matchedIds = allTasks.map(t => t.id);
+                  matched = allTasks;
                 } else {
                   for (const task of allTasks) {
                     const cleanTaskName = task.task.toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -299,24 +332,26 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
                       const cleanKeyword = kw.toLowerCase().replace(/tugas/g, '').replace(/[^a-z0-9]/g, '');
                       return cleanKeyword.length > 2 && cleanTaskName.includes(cleanKeyword);
                     });
-                    if (isMatch) matchedIds.push(task.id);
+                    if (isMatch) matched.push(task);
                   }
                 }
                 
-                if (matchedIds.length === 0) {
+                if (matched.length === 0) {
                   replyMessages.push("Tidak ada tugas yang cocok untuk dihapus.");
                   break;
                 }
 
-                const summary = `${matchedIds.length} tugas`;
+                const matchedIds = matched.map((t) => t.id);
+                const summary = buildDeleteTitleSummary(matched.map((t) => t.task));
                 await deps.savePendingDelete(env, userId, {
                   kind: "tasks",
                   ids: matchedIds,
                   summary,
                   createdAt: Date.now(),
                 });
+                pendingDeleteSavedThisTurn = true;
                 replyMessages.push(
-                  `Aldo, aku nemu ${matchedIds.length} tugas buat dihapus (${summary}). Yakin? Balas "ya" atau "jangan".`,
+                  `Aldo, aku nemu ${matchedIds.length} tugas buat dihapus: ${summary}. Yakin? Balas "ya" atau "jangan".`,
                 );
                 break;
               }
@@ -328,10 +363,10 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
                 }
                 
                 const allNotes = await deps.getAllNotes(config);
-                let matchedIds: string[] = [];
+                let matched: typeof allNotes = [];
                 
                 if (keywords.includes("ALL")) {
-                  matchedIds = allNotes.map(n => n.id);
+                  matched = allNotes;
                 } else {
                   for (const note of allNotes) {
                     const cleanNoteTitle = note.title.toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -339,24 +374,26 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
                       const cleanKeyword = kw.toLowerCase().replace(/[^a-z0-9]/g, '');
                       return cleanKeyword.length > 2 && cleanNoteTitle.includes(cleanKeyword);
                     });
-                    if (isMatch) matchedIds.push(note.id);
+                    if (isMatch) matched.push(note);
                   }
                 }
                 
-                if (matchedIds.length === 0) {
+                if (matched.length === 0) {
                   replyMessages.push("Tidak ada catatan yang cocok untuk dihapus.");
                   break;
                 }
 
-                const summary = `${matchedIds.length} catatan`;
+                const matchedIds = matched.map((n) => n.id);
+                const summary = buildDeleteTitleSummary(matched.map((n) => n.title));
                 await deps.savePendingDelete(env, userId, {
                   kind: "notes",
                   ids: matchedIds,
                   summary,
                   createdAt: Date.now(),
                 });
+                pendingDeleteSavedThisTurn = true;
                 replyMessages.push(
-                  `Aldo, aku nemu ${matchedIds.length} catatan buat dihapus (${summary}). Yakin? Balas "ya" atau "jangan".`,
+                  `Aldo, aku nemu ${matchedIds.length} catatan buat dihapus: ${summary}. Yakin? Balas "ya" atau "jangan".`,
                 );
                 break;
               }
@@ -377,10 +414,10 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
                 }
                 
                 const allMemory = await deps.getAllMemory(config);
-                let matchedIds: string[] = [];
+                let matched: typeof allMemory = [];
                 
                 if (keywords.includes("ALL")) {
-                  matchedIds = allMemory.map(m => m.id);
+                  matched = allMemory;
                 } else {
                   for (const mem of allMemory) {
                     const cleanMemKey = mem.key.toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -388,24 +425,26 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
                       const cleanKeyword = kw.toLowerCase().replace(/[^a-z0-9]/g, '');
                       return cleanKeyword.length > 2 && cleanMemKey.includes(cleanKeyword);
                     });
-                    if (isMatch) matchedIds.push(mem.id);
+                    if (isMatch) matched.push(mem);
                   }
                 }
                 
-                if (matchedIds.length === 0) {
+                if (matched.length === 0) {
                   replyMessages.push("Tidak ada memori yang cocok untuk dihapus.");
                   break;
                 }
 
-                const summary = `${matchedIds.length} memori`;
+                const matchedIds = matched.map((m) => m.id);
+                const summary = buildDeleteTitleSummary(matched.map((m) => m.key));
                 await deps.savePendingDelete(env, userId, {
                   kind: "memory",
                   ids: matchedIds,
                   summary,
                   createdAt: Date.now(),
                 });
+                pendingDeleteSavedThisTurn = true;
                 replyMessages.push(
-                  `Aldo, aku nemu ${matchedIds.length} memori buat dihapus (${summary}). Yakin? Balas "ya" atau "jangan".`,
+                  `Aldo, aku nemu ${matchedIds.length} memori buat dihapus: ${summary}. Yakin? Balas "ya" atau "jangan".`,
                 );
                 break;
               }

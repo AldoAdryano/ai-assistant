@@ -22,6 +22,13 @@ export function matchProject(query: string, projects: ProjectRecord[]): ProjectM
   return { kind: "ambiguous", candidates: contains };
 }
 
+/** Case-insensitive exact name equality; substring matches do not count. */
+export function findExactProject(name: string, projects: ProjectRecord[]): ProjectRecord | null {
+  const lower = name.trim().toLowerCase();
+  if (!lower) return null;
+  return projects.find((p) => p.name.toLowerCase() === lower) ?? null;
+}
+
 /**
  * Pull a project name from user text when they said "untuk/ke/di project X".
  * Returns null for "tanpa project" or when no mention.

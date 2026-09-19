@@ -1,11 +1,15 @@
 import { expect, it } from "vitest";
 import type { AppConfig } from "../src/types";
 import {
+  NotionRejectionError,
   TASK_PROJECT_PROPERTY,
+  archiveProject,
+  createProject,
   createTask,
   getAllTasks,
   listActiveTasks,
   listProjects,
+  updateProject,
 } from "../src/notion";
 
 const baseConfig: AppConfig = {
@@ -314,4 +318,96 @@ it("getAllTasks maps project relation the same way", async () => {
     projectId: "proj-2",
     projectName: "Portfolio",
   });
+});
+
+it("createProject posts title and optional Area/Deadline", async () => {
+  let url = "";
+  let method = "";
+  let body: any;
+  const fakeFetch: typeof fetch = async (input, init) => {
+    url = String(input);
+    method = init?.method || "GET";
+    body = JSON.parse(String(init?.body));
+    return new Response(JSON.stringify({ id: "proj-new" }), { status: 200 });
+  };
+
+  const id = await createProject(
+    configWithProjects,
+    { name: "Portfolio Embedded", area: "Belajar", deadline: "2026-10-15" },
+    fakeFetch,
+  );
+
+  expect(id).toBe("proj-new");
+  expect(method).toBe("POST");
+  expect(url).toBe("https://api.notion.com/v1/pages");
+  expect(body.parent).toEqual({ type: "data_source_id", data_source_id: "projects-ds" });
+  expect(body.properties.Project.title[0].text.content).toBe("Portfolio Embedded");
+  expect(body.properties.Area).toEqual({ select: { name: "Belajar" } });
+  expect(body.properties.Deadline).toEqual({ date: { start: "2026-10-15" } });
+});
+
+it("createProject omits Area/Deadline when not provided", async () => {
+  let body: any;
+  const fakeFetch: typeof fetch = async (_input, init) => {
+    body = JSON.parse(String(init?.body));
+    return new Response(JSON.stringify({ id: "proj-min" }), { status: 200 });
+  };
+
+  await createProject(configWithProjects, { name: "Solo Project" }, fakeFetch);
+  expect(body.properties.Project.title[0].text.content).toBe("Solo Project");
+  expect(body.properties.Area).toBeUndefined();
+  expect(body.properties.Deadline).toBeUndefined();
+});
+
+it("createProject throws NotionRejectionError when projects data source unset", async () => {
+  let called = false;
+  const fakeFetch: typeof fetch = async () => {
+    called = true;
+    return new Response(JSON.stringify({ id: "x" }), { status: 200 });
+  };
+
+  await expect(
+    createProject(baseConfig, { name: "Should Fail" }, fakeFetch),
+  ).rejects.toThrow(NotionRejectionError);
+  expect(called).toBe(false);
+});
+
+it("updateProject PATCHes provided name/area/deadline", async () => {
+  let url = "";
+  let method = "";
+  let body: any;
+  const fakeFetch: typeof fetch = async (input, init) => {
+    url = String(input);
+    method = init?.method || "GET";
+    body = JSON.parse(String(init?.body));
+    return new Response(JSON.stringify({ id: "proj-1" }), { status: 200 });
+  };
+
+  await updateProject(
+    configWithProjects,
+    "proj-1",
+    { name: "Persiapan IKN 2026", area: "Work", deadline: "2026-12-01" },
+    fakeFetch,
+  );
+
+  expect(method).toBe("PATCH");
+  expect(url).toBe("https://api.notion.com/v1/pages/proj-1");
+  expect(body.properties.Project.title[0].text.content).toBe("Persiapan IKN 2026");
+  expect(body.properties.Area).toEqual({ select: { name: "Work" } });
+  expect(body.properties.Deadline).toEqual({ date: { start: "2026-12-01" } });
+});
+
+it("archiveProject DELETEs the project block", async () => {
+  let url = "";
+  let method = "";
+  const fakeFetch: typeof fetch = async (input, init) => {
+    url = String(input);
+    method = init?.method || "GET";
+    return new Response(JSON.stringify({ id: "proj-1" }), { status: 200 });
+  };
+
+  await archiveProject(configWithProjects, "proj-1", fakeFetch);
+
+  expect(method).toBe("DELETE");
+  expect(url).toBe("https://api.notion.com/v1/blocks/proj-1");
 });

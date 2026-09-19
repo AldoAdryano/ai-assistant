@@ -136,6 +136,67 @@ export async function listProjects(
     .filter((project): project is ProjectRecord => project !== null);
 }
 
+export async function createProject(
+  config: AppConfig,
+  project: { name: string; area?: string; deadline?: string },
+  fetchImpl: typeof fetch = fetch,
+): Promise<string> {
+  if (!config.notionProjectsDataSourceId) {
+    throw new NotionRejectionError("Projects data source is not configured");
+  }
+  const properties: Record<string, unknown> = {
+    Project: { title: textItems(project.name) },
+  };
+  if (project.area) {
+    properties.Area = { select: { name: project.area } };
+  }
+  const normDue = normalizeNotionDue(project.deadline);
+  if (normDue) {
+    properties.Deadline = { date: { start: normDue } };
+  }
+  const result = await notionRequest<{ id: string }>(config, "/pages", {
+    method: "POST",
+    body: JSON.stringify({
+      parent: { type: "data_source_id", data_source_id: config.notionProjectsDataSourceId },
+      properties,
+    }),
+  }, fetchImpl);
+  return result.id;
+}
+
+export async function updateProject(
+  config: AppConfig,
+  pageId: string,
+  update: { name?: string; area?: string; deadline?: string },
+  fetchImpl: typeof fetch = fetch,
+): Promise<void> {
+  const properties: Record<string, unknown> = {};
+  if (update.name !== undefined) {
+    properties.Project = { title: textItems(update.name) };
+  }
+  if (update.area !== undefined) {
+    properties.Area = { select: { name: update.area } };
+  }
+  if (update.deadline !== undefined) {
+    const normDue = normalizeNotionDue(update.deadline);
+    if (normDue) properties.Deadline = { date: { start: normDue } };
+  }
+  await notionRequest(config, `/pages/${pageId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ properties }),
+  }, fetchImpl);
+}
+
+export async function archiveProject(
+  config: AppConfig,
+  pageId: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<void> {
+  await notionRequest(config, `/blocks/${pageId}`, {
+    method: "DELETE",
+  }, fetchImpl);
+}
+
 function projectFieldsFromPage(
   page: any,
   byId: Map<string, string> | null,

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { matchProject, extractProjectMention } from "../src/project-match";
+import { matchProject, extractProjectMention, findExactProject } from "../src/project-match";
 import type { ProjectRecord } from "../src/types";
 
 const projects: ProjectRecord[] = [
@@ -50,5 +50,14 @@ describe("extractProjectMention", () => {
   });
   it("returns null when no mention", () => {
     expect(extractProjectMention("buat tugas laundry besok")).toBeNull();
+  });
+});
+
+describe("findExactProject", () => {
+  it("returns project on case-insensitive exact name", () => {
+    expect(findExactProject("persiapan ikn", projects)).toEqual(projects[0]);
+  });
+  it("returns null when no exact match", () => {
+    expect(findExactProject("IKN", projects)).toBeNull();
   });
 });

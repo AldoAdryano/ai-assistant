@@ -65,12 +65,20 @@ describe("filterCreateTaskCalls", () => {
 describe("delete confirm phrases", () => {
   it("detects positive short confirms", () => {
     expect(isPositiveDeleteConfirm("ya")).toBe(true);
+    expect(isPositiveDeleteConfirm("iya")).toBe(true);
+    expect(isPositiveDeleteConfirm("Iyalah")).toBe(true);
+    expect(isPositiveDeleteConfirm("iyah")).toBe(true);
+    expect(isPositiveDeleteConfirm("yoi")).toBe(true);
+    expect(isPositiveDeleteConfirm("sip")).toBe(true);
+    expect(isPositiveDeleteConfirm("setuju")).toBe(true);
+    expect(isPositiveDeleteConfirm("gas")).toBe(true);
     expect(isPositiveDeleteConfirm("yakin!")).toBe(true);
     expect(isPositiveDeleteConfirm("ok")).toBe(true);
     expect(isPositiveDeleteConfirm("oke")).toBe(true);
     expect(isPositiveDeleteConfirm("boleh")).toBe(true);
     expect(isPositiveDeleteConfirm("lanjutkan")).toBe(true);
     expect(isPositiveDeleteConfirm("ya hapus")).toBe(true);
+    expect(isPositiveDeleteConfirm("iya boleh")).toBe(true);
   });
 
   it("does not treat bare hapus or long chat as positive", () => {
@@ -144,6 +152,9 @@ describe("userExplicitRemember", () => {
   it("explicit remember phrases", () => {
     expect(userExplicitRemember("Ingat bahwa kuliah saya di UNY")).toBe(true);
     expect(userExplicitRemember("ingat ya aku suka jawaban singkat")).toBe(true);
+    expect(userExplicitRemember("oiya inget ya bahwa aku kuliah di UNY")).toBe(true);
+    expect(userExplicitRemember("Inget juga aku di prodi Pendidikan Teknik Elektronika")).toBe(true);
+    expect(userExplicitRemember("inget bahwa kampus UNY")).toBe(true);
     expect(userExplicitRemember("simpan preferensi bahasa Indonesia")).toBe(true);
     expect(userExplicitRemember("simpan memori kampus UNY")).toBe(true);
     expect(userExplicitRemember("catat di memori proyek Werkudhara")).toBe(true);

@@ -73,11 +73,15 @@ export function filterCreateTaskCalls<T extends { name: string; args: any }>(
 /** Short, confirmation-ish replies only — not bare "hapus" or long unrelated chat. */
 export function isPositiveDeleteConfirm(userText: string): boolean {
   const text = userText.trim().toLowerCase();
-  if (/^(ya|yakin|boleh|ok|oke|lanjutkan)([!.]*)?$/i.test(text)) {
+  if (
+    /^(ya|iya|iyalah|iyah|yoi|yep|yup|yes|yakin|boleh|ok|oke|lanjutkan|setuju|gas|sip)([!.]*)?$/i.test(
+      text,
+    )
+  ) {
     return true;
   }
-  // Short "ya …" / "yakin …" (e.g. "ya hapus") — not long unrelated messages
-  if (/^(ya|yakin)\b/i.test(text) && text.length < 40) {
+  // Short "ya …" / "iya …" / "yakin …" — not long unrelated messages
+  if (/^(ya|iya|iyalah|iyah|yakin)\b/i.test(text) && text.length < 40) {
     return true;
   }
   return false;
@@ -131,7 +135,7 @@ export function isPendingDeleteFresh(pending: PendingDelete, now = Date.now()): 
 }
 
 const EXPLICIT_REMEMBER =
-  /\b(ingat\s+bahwa|ingat\s+ya|simpan\s+(?:preferensi|memori)|catat\s+di\s+memori|remember\s+that)\b/i;
+  /\b(?:ingat|inget)(?:\s+(?:bahwa|ya|juga|dong|kalau|kalo))+\b|\b(?:ingat|inget)\s+bahwa\b|\boi+ya[,!]?\s+(?:ingat|inget)\b|\b(?:simpan\s+(?:preferensi|memori)|catat\s+di\s+memori|remember\s+that)\b/i;
 
 export function userExplicitRemember(userText: string): boolean {
   return EXPLICIT_REMEMBER.test(userText.trim());

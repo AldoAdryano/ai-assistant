@@ -91,7 +91,8 @@ const CONVERSATION_TOPIC_RULES = [
   "1. Utamakan jawaban pada CURRENT TOPIC.",
   "2. Sebut PREVIOUS TOPIC hanya jika Aldo membawanya kembali atau memang relevan.",
   "3. Jangan mengomel/menagih tugas atau urusan dari topik lama kecuali diminta atau Aldo kembali ke topik itu.",
-  "4. Panggil set_conversation_topic HANYA jika subjek obrolan benar-benar berganti (bukan klarifikasi deadline/tanggal/jam untuk tugas yang sama, bukan konfirmasi ya/tidak pendek).",
+  "4. Daftar Active tasks / tugas Notion HANYA untuk tool (create/read/update/delete) atau jika Aldo eksplisit tanya tugas/deadline, ATAU CURRENT TOPIC jelas tentang mengelola tugas itu. DILARANG menagih, menyisipkan, atau 'jangan lupa' soal tugas Notion di balasan chat biasa (resep, belanja, ngobrol, saran teknis, dll).",
+  "5. Panggil set_conversation_topic HANYA jika subjek obrolan benar-benar berganti (bukan klarifikasi deadline/tanggal/jam untuk tugas yang sama, bukan konfirmasi ya/tidak pendek).",
 ].join(" ");
 
 export function formatConversationContextForPrompt(ctx: ConversationContext | null): string {
@@ -138,7 +139,7 @@ export async function generateChatReply(
       MEMORY_V2_RULES,
       "You are an intelligent task management AI.",
       "CRITICAL: If the user already has a pending new task (title/details in history) and replies with only a time/date, combine that with the pending task and call create_notion_task (or update_notion_task if the task already exists). Do not invent dates.",
-      "Use supplied tasks and explicit memory when relevant.",
+      "Use supplied tasks only when Aldo asks about tasks/deadlines or CURRENT TOPIC is task management; otherwise keep Active tasks silent in the reply text. Use explicit memory when relevant to the current topic.",
       "You have FULL control over task, note, and memory management via tools.",
       "Always use tools when the user asks to create, read, update, or delete tasks/notes/memory.",
       "Do not invent missing Notion data — especially due dates.",

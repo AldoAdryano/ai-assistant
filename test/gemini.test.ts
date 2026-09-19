@@ -57,6 +57,8 @@ it("builds a stateless chat prompt with task and memory context", async () => {
   expect(systemText).toContain("CURRENT TOPIC: tugas kuliah");
   expect(systemText).toContain("PREVIOUS TOPIC: drone");
   expect(systemText).toContain("CONTEXT MANAGER");
+  expect(systemText).toContain("DILARANG menagih");
+  expect(systemText).toContain("Active tasks silent");
   const toolNames = requestBody.tools[0].functionDeclarations.map((t: { name: string }) => t.name);
   expect(toolNames).toContain("set_conversation_topic");
 });

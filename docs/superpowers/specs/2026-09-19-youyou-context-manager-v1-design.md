@@ -54,6 +54,7 @@ Rules:
 - Prefer answering in **current** topic.
 - Mention previous only if Aldo brings it back or it is clearly needed.
 - Do not nag unfinished tasks from previous topic unless asked or user returns to that topic.
+- Active Notion tasks are for tools / explicit task questions / task-management topics only — never unsolicited “jangan lupa” task nags in ordinary chat (shopping, recipes, tech advice, etc.).
 
 ## Architecture
 ```

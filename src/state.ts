@@ -1,3 +1,4 @@
+import type { PendingDelete } from "./action-safety";
 import type { Env, NormalizedTaskResult } from "./types";
 
 const TTL_SECONDS = 3600;
@@ -30,6 +31,30 @@ export async function clearPendingTask(env: Env, userId: number | string): Promi
   await env.DEDUP_KV.delete(getKey(userId));
 }
 
+function getPendingDeleteKey(userId: number | string): string {
+  return `pending_delete:${userId}`;
+}
+
+export async function savePendingDelete(env: Env, userId: number | string, pending: PendingDelete): Promise<void> {
+  await env.DEDUP_KV.put(getPendingDeleteKey(userId), JSON.stringify(pending), { expirationTtl: TTL_SECONDS });
+}
+
+export async function getPendingDelete(env: Env, userId: number | string): Promise<PendingDelete | null> {
+  const data = await env.DEDUP_KV.get(getPendingDeleteKey(userId));
+  if (!data) {
+    return null;
+  }
+  try {
+    return JSON.parse(data) as PendingDelete;
+  } catch {
+    return null;
+  }
+}
+
+export async function clearPendingDelete(env: Env, userId: number | string): Promise<void> {
+  await env.DEDUP_KV.delete(getPendingDeleteKey(userId));
+}
+
 function getInteractionKey(userId: number | string): string {
   return `interaction_id:${userId}`;
 }
@@ -59,6 +84,7 @@ export async function getChatLog(env: Env, userId: number | string): Promise<str
 export async function clearMemory(env: Env, userId: number | string): Promise<void> {
   await Promise.all([
     env.DEDUP_KV.delete(getInteractionKey(userId)),
-    env.DEDUP_KV.delete(getChatLogKey(userId))
+    env.DEDUP_KV.delete(getChatLogKey(userId)),
+    env.DEDUP_KV.delete(getPendingDeleteKey(userId)),
   ]);
 }

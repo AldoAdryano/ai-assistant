@@ -1,7 +1,9 @@
 import { generateChatReply, GeminiApiError } from "./gemini";
 import type { ChatReply } from "./gemini";
 import { NotionRejectionError, NotionUnknownError, createNote, createTask, listActiveTasks, getAllTasks, getAllNotes, listMemoryContext, recallMemory, upsertMemory, getAllMemory, updateTask, archiveTask, addRoutine } from "./notion";
-import { getInteractionId, saveInteractionId, getChatLog, saveChatLog, clearMemory, CHAT_LOG_MAX_CHARS } from "./state";
+import { getInteractionId, saveInteractionId, getChatLog, saveChatLog, clearMemory, getPendingDelete, savePendingDelete, clearPendingDelete, CHAT_LOG_MAX_CHARS } from "./state";
+import { filterCreateTaskCalls, isPositiveDeleteConfirm, isNegativeDeleteConfirm } from "./action-safety";
+import type { PendingDelete } from "./action-safety";
 import { parseIndonesianDeadline, parseIndonesianNaturalDate } from "./date";
 import type { AppConfig, Env } from "./types";
 
@@ -17,9 +19,16 @@ export interface RouterDeps {
   parseIndonesianNaturalDate: typeof parseIndonesianNaturalDate;
   getInteractionId: typeof getInteractionId; saveInteractionId: typeof saveInteractionId;
   getChatLog: typeof getChatLog; saveChatLog: typeof saveChatLog; clearMemory: typeof clearMemory;
+  getPendingDelete: typeof getPendingDelete; savePendingDelete: typeof savePendingDelete; clearPendingDelete: typeof clearPendingDelete;
 }
-const defaultDeps: RouterDeps = { createNote, createTask, listActiveTasks, getAllTasks, getAllNotes, upsertMemory, recallMemory, listMemoryContext, getAllMemory, updateTask, archiveTask, addRoutine, generateChatReply, parseIndonesianDeadline, parseIndonesianNaturalDate, getInteractionId, saveInteractionId, getChatLog, saveChatLog, clearMemory };
+const defaultDeps: RouterDeps = { createNote, createTask, listActiveTasks, getAllTasks, getAllNotes, upsertMemory, recallMemory, listMemoryContext, getAllMemory, updateTask, archiveTask, addRoutine, generateChatReply, parseIndonesianDeadline, parseIndonesianNaturalDate, getInteractionId, saveInteractionId, getChatLog, saveChatLog, clearMemory, getPendingDelete, savePendingDelete, clearPendingDelete };
 const HELP = ["Perintah V1 (AI-Driven):", "• /start atau /help", "• Kirim apa saja, AI akan mengurus sisanya (catatan, tugas, memori)."].join("\n");
+
+function deleteKindLabel(kind: PendingDelete["kind"]): string {
+  if (kind === "notes") return "catatan";
+  if (kind === "memory") return "memori";
+  return "tugas";
+}
 
 export async function handleUserMessage(env: Env, userId: number | string, config: AppConfig, payload: { text: string; imageBase64?: string; audioBase64?: string; chatContext?: "dm" | "group" }, deps: RouterDeps = defaultDeps): Promise<string> {
   const normalizedText = payload.text.trim();
@@ -31,6 +40,28 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
     }
     await deps.clearMemory(env, userId);
     return "Memori percakapan berhasil dihapus! Asisten siap menerima instruksi baru dari awal.";
+  }
+
+  if (!isGroup) {
+    const pending = await deps.getPendingDelete(env, userId);
+    if (pending && isPositiveDeleteConfirm(normalizedText)) {
+      let successCount = 0;
+      for (const id of pending.ids) {
+        try {
+          await deps.archiveTask(config, id);
+          successCount++;
+        } catch {
+          // continue archiving remaining ids
+        }
+      }
+      await deps.clearPendingDelete(env, userId);
+      const label = deleteKindLabel(pending.kind);
+      return `Berhasil menghapus ${successCount} ${label}.`;
+    }
+    if (pending && isNegativeDeleteConfirm(normalizedText)) {
+      await deps.clearPendingDelete(env, userId);
+      return "Ok, batal hapus. Tidak ada yang dihapus.";
+    }
   }
 
   try {
@@ -147,7 +178,12 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
           break;
         }
         const replyMessages: string[] = [];
-        for (const call of reply.calls) {
+        const filtered = filterCreateTaskCalls(reply.calls, payload.text);
+        if (filtered.blocked && filtered.clarifyMessage) {
+          replyMessages.push(filtered.clarifyMessage);
+        }
+        const callsToProcess = filtered.allowed;
+        for (const call of callsToProcess) {
           const callSignature = call.name + JSON.stringify(call.args);
           if (executedTools.has(callSignature)) {
             replyMessages.push(`[System]: Tool ${call.name} with these arguments was already executed. Skipping. DO NOT repeat it.`);
@@ -267,24 +303,21 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
                   }
                 }
                 
-                let successCount = 0;
-                let failedCount = 0;
-                const errorMessages = new Set<string>();
-                for (const id of matchedIds) {
-                  try {
-                    await deps.archiveTask(config, id);
-                    successCount++;
-                  } catch (err: any) {
-                    failedCount++;
-                    errorMessages.add(err instanceof Error ? err.message : String(err));
-                  }
+                if (matchedIds.length === 0) {
+                  replyMessages.push("Tidak ada tugas yang cocok untuk dihapus.");
+                  break;
                 }
-                
-                if (failedCount > 0) {
-                  replyMessages.push(`Berhasil menghapus ${successCount} tugas. Gagal menghapus ${failedCount} tugas. Error: ${Array.from(errorMessages).join(" | ")}`);
-                } else {
-                  replyMessages.push(`Berhasil menghapus ${successCount} tugas berdasarkan kata kunci.`);
-                }
+
+                const summary = `${matchedIds.length} tugas`;
+                await deps.savePendingDelete(env, userId, {
+                  kind: "tasks",
+                  ids: matchedIds,
+                  summary,
+                  createdAt: Date.now(),
+                });
+                replyMessages.push(
+                  `Aldo, aku nemu ${matchedIds.length} tugas buat dihapus (${summary}). Yakin? Balas "ya" atau "jangan".`,
+                );
                 break;
               }
               case "delete_notion_notes": {
@@ -310,24 +343,21 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
                   }
                 }
                 
-                let successCount = 0;
-                let failedCount = 0;
-                const errorMessages = new Set<string>();
-                for (const id of matchedIds) {
-                  try {
-                    await deps.archiveTask(config, id);
-                    successCount++;
-                  } catch (err: any) {
-                    failedCount++;
-                    errorMessages.add(err instanceof Error ? err.message : String(err));
-                  }
+                if (matchedIds.length === 0) {
+                  replyMessages.push("Tidak ada catatan yang cocok untuk dihapus.");
+                  break;
                 }
-                
-                if (failedCount > 0) {
-                  replyMessages.push(`Berhasil menghapus ${successCount} catatan. Gagal menghapus ${failedCount} catatan. Error: ${Array.from(errorMessages).join(" | ")}`);
-                } else {
-                  replyMessages.push(`Berhasil menghapus ${successCount} catatan berdasarkan kata kunci.`);
-                }
+
+                const summary = `${matchedIds.length} catatan`;
+                await deps.savePendingDelete(env, userId, {
+                  kind: "notes",
+                  ids: matchedIds,
+                  summary,
+                  createdAt: Date.now(),
+                });
+                replyMessages.push(
+                  `Aldo, aku nemu ${matchedIds.length} catatan buat dihapus (${summary}). Yakin? Balas "ya" atau "jangan".`,
+                );
                 break;
               }
               case "read_notion_notes": {
@@ -362,24 +392,21 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
                   }
                 }
                 
-                let successCount = 0;
-                let failedCount = 0;
-                const errorMessages = new Set<string>();
-                for (const id of matchedIds) {
-                  try {
-                    await deps.archiveTask(config, id);
-                    successCount++;
-                  } catch (err: any) {
-                    failedCount++;
-                    errorMessages.add(err instanceof Error ? err.message : String(err));
-                  }
+                if (matchedIds.length === 0) {
+                  replyMessages.push("Tidak ada memori yang cocok untuk dihapus.");
+                  break;
                 }
-                
-                if (failedCount > 0) {
-                  replyMessages.push(`Berhasil menghapus ${successCount} memori. Gagal menghapus ${failedCount} memori. Error: ${Array.from(errorMessages).join(" | ")}`);
-                } else {
-                  replyMessages.push(`Berhasil menghapus ${successCount} memori berdasarkan kata kunci.`);
-                }
+
+                const summary = `${matchedIds.length} memori`;
+                await deps.savePendingDelete(env, userId, {
+                  kind: "memory",
+                  ids: matchedIds,
+                  summary,
+                  createdAt: Date.now(),
+                });
+                replyMessages.push(
+                  `Aldo, aku nemu ${matchedIds.length} memori buat dihapus (${summary}). Yakin? Balas "ya" atau "jangan".`,
+                );
                 break;
               }
               default:

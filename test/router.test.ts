@@ -29,6 +29,9 @@ function deps(overrides: Partial<RouterDeps> = {}): RouterDeps {
     getChatLog: vi.fn(async () => null),
     saveChatLog: vi.fn(async () => undefined),
     clearMemory: vi.fn(async () => undefined),
+    getPendingDelete: vi.fn(async () => null),
+    savePendingDelete: vi.fn(async () => undefined),
+    clearPendingDelete: vi.fn(async () => undefined),
     ...overrides,
   };
 }
@@ -182,10 +185,80 @@ describe("handleUserMessage (AI-Driven)", () => {
       ]) as any
     });
     const reply = await handleUserMessage(env, 123, config, { text: "Hapus tugas 1 dan 2" }, d);
+    expect(d.archiveTask).not.toHaveBeenCalled();
+    expect(d.savePendingDelete).toHaveBeenCalledWith(
+      env,
+      123,
+      expect.objectContaining({ kind: "tasks", ids: ["task-1", "task-2"] }),
+    );
+    expect(reply).toMatch(/yakin|ya|jangan/i);
+    expect(reply).toMatch(/2/);
+  });
+
+  it("archives pending delete when user confirms with ya", async () => {
+    const d = deps({
+      getPendingDelete: vi.fn(async () => ({
+        kind: "tasks" as const,
+        ids: ["task-1", "task-2"],
+        summary: "2 tugas",
+        createdAt: Date.now(),
+      })),
+    });
+    const reply = await handleUserMessage(env, 123, config, { text: "ya" }, d);
+    expect(d.generateChatReply).not.toHaveBeenCalled();
     expect(d.archiveTask).toHaveBeenCalledTimes(2);
     expect(d.archiveTask).toHaveBeenCalledWith(config, "task-1");
     expect(d.archiveTask).toHaveBeenCalledWith(config, "task-2");
-    expect(reply).toContain("Berhasil menghapus 2 tugas berdasarkan kata kunci");
+    expect(d.clearPendingDelete).toHaveBeenCalledWith(env, 123);
+    expect(reply).toMatch(/2|berhasil|hapus/i);
+  });
+
+  it("cancels pending delete when user says jangan", async () => {
+    const d = deps({
+      getPendingDelete: vi.fn(async () => ({
+        kind: "tasks" as const,
+        ids: ["task-1"],
+        summary: "1 tugas",
+        createdAt: Date.now(),
+      })),
+    });
+    const reply = await handleUserMessage(env, 123, config, { text: "jangan" }, d);
+    expect(d.generateChatReply).not.toHaveBeenCalled();
+    expect(d.archiveTask).not.toHaveBeenCalled();
+    expect(d.clearPendingDelete).toHaveBeenCalledWith(env, 123);
+    expect(reply).toMatch(/batal|cancel|tidak dihapus|ok/i);
+  });
+
+  it("blocks multiple create_notion_task in one turn without explicit multi", async () => {
+    const d = deps({
+      generateChatReply: vi.fn()
+        .mockResolvedValueOnce({
+          type: "function_calls",
+          calls: [1, 2, 3, 4].map((i) => ({
+            name: "create_notion_task",
+            args: { title: `Simurelay ${i}`, priority: "Medium" },
+          })),
+        })
+        .mockResolvedValue({ type: "text", text: "ok" }) as any,
+    });
+    const reply = await handleUserMessage(env, 123, config, {
+      text: "Simurelay error\ncek board\nfix wiring\ntest ulang",
+    }, d);
+    expect(d.createTask).not.toHaveBeenCalled();
+    expect(reply).toMatch(/satu|beberapa/i);
+  });
+
+  it("text-only Gemini reply never writes to Notion", async () => {
+    const d = deps({
+      generateChatReply: vi.fn(async () => ({
+        type: "text",
+        text: "Aldo, mau jadi satu tugas atau beberapa?",
+      })) as any,
+    });
+    const reply = await handleUserMessage(env, 123, config, { text: "Simurelay error lagi" }, d);
+    expect(d.createTask).not.toHaveBeenCalled();
+    expect(d.archiveTask).not.toHaveBeenCalled();
+    expect(reply).toMatch(/satu|beberapa/i);
   });
 
   it("handles NotionRejectionError for createTask", async () => {
@@ -261,7 +334,7 @@ describe("handleUserMessage (AI-Driven)", () => {
           ]
         }) as any
     });
-    const reply = await handleUserMessage(env, 123, config, { text: "Buat tugas dua kali" }, d);
+    const reply = await handleUserMessage(env, 123, config, { text: "buat 2 tugas: Tugas sama" }, d);
     expect(d.createTask).toHaveBeenCalledTimes(1); // Should only execute once due to duplicate check
     expect(reply).toContain("Tugas 'Tugas sama' sudah ditambahkan");
   });

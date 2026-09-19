@@ -118,7 +118,7 @@ function formatProjectsForPrompt(projects: ProjectRecord[]): string {
   return [
     "Known LIFE OS projects (use these names only; do not invent):",
     ...lines,
-    "PROJECT RULES: optional `project` on create_notion_task = best matching name from this list. If unsure which project → clarify in text, do not call create yet. Omit `project` if none / user said without project.",
+    "PROJECT RULES: If Aldo says 'untuk/ke/di project X', ALWAYS pass project=X on create_notion_task (even if X is not in the list — the system will reject unknowns). If unsure which listed project → clarify in text, do not call create yet. Omit `project` only if none / user said tanpa project.",
   ].join("\n");
 }
 

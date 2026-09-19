@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { matchProject } from "../src/project-match";
+import { matchProject, extractProjectMention } from "../src/project-match";
 import type { ProjectRecord } from "../src/types";
 
 const projects: ProjectRecord[] = [
@@ -35,5 +35,20 @@ describe("matchProject", () => {
   });
   it("empty query → none", () => {
     expect(matchProject("  ", projects)).toEqual({ kind: "none" });
+  });
+});
+
+describe("extractProjectMention", () => {
+  it("extracts untuk project …", () => {
+    expect(extractProjectMention("buat tugas beli powerbank untuk project Liburan Mars")).toBe("Liburan Mars");
+  });
+  it("extracts before deadline clause", () => {
+    expect(extractProjectMention("packing untuk project Persiapan IKN, deadline besok jam 8")).toBe("Persiapan IKN");
+  });
+  it("returns null for tanpa project", () => {
+    expect(extractProjectMention("buat tugas isi bensin, tanpa project, deadline lusa")).toBeNull();
+  });
+  it("returns null when no mention", () => {
+    expect(extractProjectMention("buat tugas laundry besok")).toBeNull();
   });
 });

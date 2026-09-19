@@ -33,7 +33,7 @@ import {
 import type { PendingDelete, PendingMemory } from "./action-safety";
 import { applyTopicSwitch, detectExplicitTopicSwitch, type ConversationContext } from "./conversation-context";
 import { parseIndonesianDeadline, parseIndonesianNaturalDate } from "./date";
-import { matchProject } from "./project-match";
+import { extractProjectMention, matchProject } from "./project-match";
 import type { AppConfig, Env, ProjectRecord } from "./types";
 
 export function sanitizeMarkdown(text: string): string {
@@ -369,7 +369,9 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
                 }
                 const notes = typeof args.content === "string" ? args.content.trim() : "";
                 let projectId: string | undefined;
-                const projectArg = typeof args.project === "string" ? args.project.trim() : "";
+                const fromTool = typeof args.project === "string" ? args.project.trim() : "";
+                const fromText = extractProjectMention(payload.text);
+                const projectArg = fromTool || fromText || "";
                 if (projectsEnabled && projectArg) {
                   const knownProjects = await ensureProjects();
                   const matched = matchProject(projectArg, knownProjects);

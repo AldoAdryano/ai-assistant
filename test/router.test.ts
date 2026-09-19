@@ -850,6 +850,30 @@ describe("handleUserMessage (AI-Driven)", () => {
       expect(reply).toContain("Persiapan IKN");
     });
 
+    it("rejects unknown project mentioned in user text even if tool omits project arg", async () => {
+      const d = deps({
+        listProjects: vi.fn(async () => sampleProjects),
+        generateChatReply: vi.fn()
+          .mockResolvedValueOnce({
+            type: "function_calls",
+            calls: [{
+              name: "create_notion_task",
+              args: { title: "Beli powerbank", priority: "Medium" },
+            }],
+          })
+          .mockResolvedValue({ type: "text", text: "ok" }) as any,
+      });
+      const reply = await handleUserMessage(
+        env,
+        123,
+        projectsConfig,
+        { text: "buat tugas beli powerbank untuk project Liburan Mars" },
+        d,
+      );
+      expect(d.createTask).not.toHaveBeenCalled();
+      expect(reply).toMatch(/Project tidak cocok/i);
+    });
+
     it("create_notion_task with ambiguous project does not create", async () => {
       const d = deps({
         listProjects: vi.fn(async () => sampleProjects),

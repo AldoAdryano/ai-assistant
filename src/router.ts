@@ -1,6 +1,6 @@
 import { generateChatReply, generateTaskBriefing, GeminiApiError } from "./gemini";
 import type { ChatReply } from "./gemini";
-import { NotionRejectionError, NotionUnknownError, createNote, createTask, listActiveTasks, getAllTasks, getAllNotes, listMemoryContext, recallMemory, upsertMemory, getAllMemory, updateTask, archiveTask, addRoutine } from "./notion";
+import { NotionRejectionError, NotionUnknownError, createNote, createTask, listActiveTasks, listProjects, getAllTasks, getAllNotes, listMemoryContext, recallMemory, upsertMemory, getAllMemory, updateTask, archiveTask, addRoutine } from "./notion";
 import { detectBriefingRequest, selectBriefingTasks, emptyBriefingReply } from "./task-intelligence";
 import {
   getInteractionId,
@@ -33,14 +33,15 @@ import {
 import type { PendingDelete, PendingMemory } from "./action-safety";
 import { applyTopicSwitch, detectExplicitTopicSwitch, type ConversationContext } from "./conversation-context";
 import { parseIndonesianDeadline, parseIndonesianNaturalDate } from "./date";
-import type { AppConfig, Env } from "./types";
+import { matchProject } from "./project-match";
+import type { AppConfig, Env, ProjectRecord } from "./types";
 
 export function sanitizeMarkdown(text: string): string {
   return text.replace(/\*\*([^*]+)\*\*/g, "*$1*");
 }
 
 export interface RouterDeps {
-  createNote: typeof createNote; createTask: typeof createTask; listActiveTasks: typeof listActiveTasks; getAllTasks: typeof getAllTasks; getAllNotes: typeof getAllNotes;
+  createNote: typeof createNote; createTask: typeof createTask; listActiveTasks: typeof listActiveTasks; listProjects: typeof listProjects; getAllTasks: typeof getAllTasks; getAllNotes: typeof getAllNotes;
   upsertMemory: typeof upsertMemory; recallMemory: typeof recallMemory; listMemoryContext: typeof listMemoryContext; getAllMemory: typeof getAllMemory; updateTask: typeof updateTask; archiveTask: typeof archiveTask; addRoutine: typeof addRoutine;
   generateChatReply: typeof generateChatReply;
   parseIndonesianDeadline: typeof parseIndonesianDeadline;
@@ -55,7 +56,7 @@ export interface RouterDeps {
   generateTaskBriefing: typeof generateTaskBriefing;
 }
 const defaultDeps: RouterDeps = {
-  createNote, createTask, listActiveTasks, getAllTasks, getAllNotes, upsertMemory, recallMemory, listMemoryContext, getAllMemory, updateTask, archiveTask, addRoutine,
+  createNote, createTask, listActiveTasks, listProjects, getAllTasks, getAllNotes, upsertMemory, recallMemory, listMemoryContext, getAllMemory, updateTask, archiveTask, addRoutine,
   generateChatReply, parseIndonesianDeadline, parseIndonesianNaturalDate, getInteractionId, saveInteractionId, getChatLog, saveChatLog, clearMemory,
   getPendingDelete, savePendingDelete, clearPendingDelete, getPendingMemory, savePendingMemory, clearPendingMemory,
   getConversationContext, saveConversationContext, clearConversationContext,
@@ -163,14 +164,32 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
       }
     }
 
-    const [tasks, memories, previousInteractionId, chatLog] = isGroup
-      ? [[], [], null as string | null, await deps.getChatLog(env, userId)]
+    const projectsEnabled = Boolean(config.notionProjectsDataSourceId);
+    let projects: ProjectRecord[] = [];
+    let projectsLoaded = false;
+
+    const [tasks, memories, previousInteractionId, chatLog, loadedProjects] = isGroup
+      ? [[], [], null as string | null, await deps.getChatLog(env, userId), [] as ProjectRecord[]]
       : await Promise.all([
           deps.listActiveTasks(config),
           deps.listMemoryContext(config),
           deps.getInteractionId(env, userId),
           deps.getChatLog(env, userId),
+          projectsEnabled ? deps.listProjects(config) : Promise.resolve([] as ProjectRecord[]),
         ]);
+    if (projectsEnabled) {
+      projects = loadedProjects;
+      projectsLoaded = true;
+    }
+
+    const ensureProjects = async (): Promise<ProjectRecord[]> => {
+      if (!projectsEnabled) return [];
+      if (!projectsLoaded) {
+        projects = await deps.listProjects(config);
+        projectsLoaded = true;
+      }
+      return projects;
+    };
 
     let currentLog = chatLog ? chatLog + "\nUser: " + payload.text : "User: " + payload.text;
     if (payload.imageBase64) currentLog += " [Attached Image]";
@@ -208,6 +227,7 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
             {
               tasks,
               memories,
+              ...(projectsEnabled && !isGroup ? { projects } : {}),
               chatContext: isGroup ? "group" : "dm",
               conversation: isGroup ? null : conversationContext,
             },
@@ -343,12 +363,34 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
                   }
                 }
                 const notes = typeof args.content === "string" ? args.content.trim() : "";
+                let projectId: string | undefined;
+                const projectArg = typeof args.project === "string" ? args.project.trim() : "";
+                if (projectsEnabled && projectArg) {
+                  const knownProjects = await ensureProjects();
+                  const matched = matchProject(projectArg, knownProjects);
+                  if (matched.kind === "one") {
+                    projectId = matched.project.id;
+                  } else if (matched.kind === "none") {
+                    const names = knownProjects.slice(0, 5).map((p) => p.name).join(", ");
+                    replyMessages.push(
+                      `Project tidak cocok. Project yang ada: ${names}. Sebut project yang mana, atau bilang tanpa project.`,
+                    );
+                    continue;
+                  } else {
+                    const names = matched.candidates.map((p) => p.name).join(", ");
+                    replyMessages.push(
+                      `Beberapa project cocok (${names}). Sebut project yang mana, atau bilang tanpa project.`,
+                    );
+                    continue;
+                  }
+                }
                 const taskPayload = { 
                   task: String(args.title || ""), 
                   priority: args.priority || "Medium", 
                   ...(finalDueDate ? { due_date: finalDueDate } : {}),
                   ...(args.due_time ? { due_time: args.due_time } : {}),
                   ...(notes ? { notes } : {}),
+                  ...(projectId ? { projectId } : {}),
                 };
                 await deps.createTask(config, taskPayload);
                 let createMsg = `Tugas '${args.title}' sudah ditambahkan dengan prioritas ${args.priority || "Medium"}.`;
@@ -364,7 +406,7 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
                   replyMessages.push(call.args.status ? `Tidak ada tugas dengan status ${call.args.status} di Notion.` : "Tidak ada tugas aktif di Notion.");
                   break;
                 }
-                replyMessages.push(activeTasks.slice(0, 20).map((task, index) => `${index + 1}. [${task.priority}] ${task.task}${task.due ? ` — ${task.due}` : ""}`).join("\n"));
+                replyMessages.push(activeTasks.slice(0, 20).map((task, index) => `${index + 1}. [${task.priority}] ${task.task}${task.projectName ? ` ⟨${task.projectName}⟩` : ""}${task.due ? ` — ${task.due}` : ""}`).join("\n"));
                 break;
               }
               case "create_notion_note": {

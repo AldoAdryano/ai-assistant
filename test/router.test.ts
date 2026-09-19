@@ -13,6 +13,7 @@ function deps(overrides: Partial<RouterDeps> = {}): RouterDeps {
     createNote: vi.fn(async () => "note-id"),
     createTask: vi.fn(async () => "task-id"),
     listActiveTasks: vi.fn(async (): Promise<TaskRecord[]> => []),
+    listProjects: vi.fn(async () => []),
     getAllTasks: vi.fn(async (): Promise<TaskRecord[]> => []),
     getAllNotes: vi.fn(async (): Promise<Array<{ id: string; title: string }>> => []),
     upsertMemory: vi.fn(async () => "memory-id"),
@@ -796,5 +797,139 @@ describe("handleUserMessage (AI-Driven)", () => {
     expect(d.generateTaskBriefing).not.toHaveBeenCalled();
     expect(d.generateChatReply).toHaveBeenCalled();
     expect(reply).toBe("Hai di grup");
+  });
+
+  describe("Projects Link", () => {
+    const projectsConfig = {
+      notionProjectsDataSourceId: "projects-ds",
+    } as AppConfig;
+
+    const sampleProjects = [
+      { id: "proj-ikn", name: "Persiapan IKN" },
+      { id: "proj-port", name: "Portfolio" },
+      { id: "proj-alpha", name: "Alpha" },
+      { id: "proj-alpine", name: "Alpine" },
+    ];
+
+    it("create_notion_task with matching project passes projectId to createTask", async () => {
+      const d = deps({
+        listProjects: vi.fn(async () => sampleProjects),
+        generateChatReply: vi.fn()
+          .mockResolvedValueOnce({
+            type: "function_calls",
+            calls: [{
+              name: "create_notion_task",
+              args: { title: "Laundry", priority: "Medium", project: "Persiapan IKN" },
+            }],
+          })
+          .mockResolvedValue({ type: "text", text: "ok" }) as any,
+      });
+      await handleUserMessage(env, 123, projectsConfig, { text: "buat tugas laundry di IKN" }, d);
+      expect(d.createTask).toHaveBeenCalledWith(projectsConfig, expect.objectContaining({
+        task: "Laundry",
+        projectId: "proj-ikn",
+      }));
+    });
+
+    it("create_notion_task with unknown project does not create and asks clarify", async () => {
+      const d = deps({
+        listProjects: vi.fn(async () => sampleProjects),
+        generateChatReply: vi.fn()
+          .mockResolvedValueOnce({
+            type: "function_calls",
+            calls: [{
+              name: "create_notion_task",
+              args: { title: "Laundry", priority: "Medium", project: "Finance" },
+            }],
+          })
+          .mockResolvedValue({ type: "text", text: "ok" }) as any,
+      });
+      const reply = await handleUserMessage(env, 123, projectsConfig, { text: "tugas finance" }, d);
+      expect(d.createTask).not.toHaveBeenCalled();
+      expect(reply).toMatch(/sebut project yang mana, atau bilang tanpa project/i);
+      expect(reply).toContain("Persiapan IKN");
+    });
+
+    it("create_notion_task with ambiguous project does not create", async () => {
+      const d = deps({
+        listProjects: vi.fn(async () => sampleProjects),
+        generateChatReply: vi.fn()
+          .mockResolvedValueOnce({
+            type: "function_calls",
+            calls: [{
+              name: "create_notion_task",
+              args: { title: "Stuff", priority: "Low", project: "Alp" },
+            }],
+          })
+          .mockResolvedValue({ type: "text", text: "ok" }) as any,
+      });
+      const reply = await handleUserMessage(env, 123, projectsConfig, { text: "tugas alp" }, d);
+      expect(d.createTask).not.toHaveBeenCalled();
+      expect(reply).toContain("Alpha");
+      expect(reply).toContain("Alpine");
+    });
+
+    it("projects disabled ignores args.project and creates without projectId", async () => {
+      const disabledConfig = { notionProjectsDataSourceId: null } as AppConfig;
+      const d = deps({
+        listProjects: vi.fn(async () => sampleProjects),
+        generateChatReply: vi.fn()
+          .mockResolvedValueOnce({
+            type: "function_calls",
+            calls: [{
+              name: "create_notion_task",
+              args: { title: "Laundry", priority: "Medium", project: "Persiapan IKN" },
+            }],
+          })
+          .mockResolvedValue({ type: "text", text: "ok" }) as any,
+      });
+      await handleUserMessage(env, 123, disabledConfig, { text: "buat laundry IKN" }, d);
+      expect(d.listProjects).not.toHaveBeenCalled();
+      expect(d.createTask).toHaveBeenCalledWith(disabledConfig, {
+        task: "Laundry",
+        priority: "Medium",
+      });
+      expect(d.createTask).toHaveBeenCalledWith(
+        disabledConfig,
+        expect.not.objectContaining({ projectId: expect.anything() }),
+      );
+    });
+
+    it("read_notion_tasks includes ⟨Project⟩ when projectName present", async () => {
+      const d = deps({
+        listProjects: vi.fn(async () => sampleProjects),
+        generateChatReply: vi.fn()
+          .mockResolvedValueOnce({
+            type: "function_calls",
+            calls: [{ name: "read_notion_tasks", args: {} }],
+          })
+          .mockResolvedValue({ type: "text", text: "ok" }) as any,
+        listActiveTasks: vi.fn(async () => [
+          {
+            id: "1",
+            task: "Laundry",
+            status: "To Do",
+            priority: "High",
+            due: "2026-09-20",
+            projectName: "Persiapan IKN",
+          },
+        ]) as any,
+      });
+      const reply = await handleUserMessage(env, 123, projectsConfig, { text: "list tugas" }, d);
+      expect(reply).toContain("1. [High] Laundry ⟨Persiapan IKN⟩ — 2026-09-20");
+    });
+
+    it("passes projects into generateChatReply when projects data source configured", async () => {
+      const d = deps({
+        listProjects: vi.fn(async () => sampleProjects),
+        generateChatReply: vi.fn(async (_c, _m, ctx) => {
+          expect(ctx.projects).toEqual(sampleProjects);
+          return { type: "text", text: "Hai" };
+        }) as any,
+      });
+      await handleUserMessage(env, 123, projectsConfig, { text: "Halo" }, d);
+      expect(d.listProjects).toHaveBeenCalledWith(projectsConfig);
+      expect(d.generateChatReply).toHaveBeenCalled();
+    });
   });
 });

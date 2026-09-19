@@ -35,6 +35,9 @@ function deps(overrides: Partial<RouterDeps> = {}): RouterDeps {
     getPendingMemory: vi.fn(async () => null),
     savePendingMemory: vi.fn(async () => undefined),
     clearPendingMemory: vi.fn(async () => undefined),
+    getConversationContext: vi.fn(async () => null),
+    saveConversationContext: vi.fn(async () => undefined),
+    clearConversationContext: vi.fn(async () => undefined),
     ...overrides,
   };
 }
@@ -625,5 +628,96 @@ describe("handleUserMessage (AI-Driven)", () => {
     expect(d.upsertMemory).not.toHaveBeenCalled();
     expect(d.clearPendingMemory).not.toHaveBeenCalled();
     expect(reply).toMatch(/berhasil|hapus/i);
+  });
+
+  it("explicit phrase pindah topik saves conversation context with previous preserved", async () => {
+    const prior = {
+      currentTopic: "drone FPV",
+      previousTopic: null as string | null,
+      activeTaskHint: "beli drone",
+      updatedAt: 1,
+    };
+    const d = deps({
+      getConversationContext: vi.fn(async () => prior),
+      generateChatReply: vi.fn(async () => ({ type: "text", text: "Ok belanja kaos" })) as any,
+    });
+    await handleUserMessage(env, 123, config, { text: "pindah topik belanja kaos" }, d);
+    expect(d.saveConversationContext).toHaveBeenCalledWith(
+      env,
+      123,
+      expect.objectContaining({
+        currentTopic: expect.stringMatching(/belanja\s*kaos/i),
+        previousTopic: "drone FPV",
+        activeTaskHint: null,
+      }),
+    );
+    expect(d.generateChatReply).toHaveBeenCalledWith(
+      config,
+      expect.anything(),
+      expect.objectContaining({
+        conversation: expect.objectContaining({
+          currentTopic: expect.stringMatching(/belanja\s*kaos/i),
+          previousTopic: "drone FPV",
+        }),
+      }),
+      null,
+    );
+  });
+
+  it("deadline-only besok does not save conversation context via phrase path", async () => {
+    const d = deps({
+      getConversationContext: vi.fn(async () => ({
+        currentTopic: "drone FPV",
+        previousTopic: null,
+        activeTaskHint: null,
+        updatedAt: 1,
+      })),
+      generateChatReply: vi.fn(async () => ({ type: "text", text: "Ok besok" })) as any,
+    });
+    await handleUserMessage(env, 123, config, { text: "besok" }, d);
+    expect(d.saveConversationContext).not.toHaveBeenCalled();
+  });
+
+  it("set_conversation_topic tool saves conversation context", async () => {
+    const prior = {
+      currentTopic: "drone FPV",
+      previousTopic: null as string | null,
+      activeTaskHint: null,
+      updatedAt: 1,
+    };
+    const d = deps({
+      getConversationContext: vi.fn(async () => prior),
+      generateChatReply: vi.fn()
+        .mockResolvedValueOnce({
+          type: "function_calls",
+          calls: [{ name: "set_conversation_topic", args: { topic: "belanja kaos", reason: "user switched" } }],
+        })
+        .mockResolvedValue({ type: "text", text: "Sip, belanja kaos ya" }) as any,
+    });
+    const reply = await handleUserMessage(env, 123, config, { text: "mau belanja kaos aja" }, d);
+    expect(d.saveConversationContext).toHaveBeenCalledWith(
+      env,
+      123,
+      expect.objectContaining({
+        currentTopic: "belanja kaos",
+        previousTopic: "drone FPV",
+      }),
+    );
+    expect(reply).toContain("belanja kaos");
+  });
+
+  it("group mode never loads or saves conversation context", async () => {
+    const d = deps({
+      generateChatReply: vi.fn(async (_c, _m, ctx) => {
+        expect(ctx.conversation == null).toBe(true);
+        return { type: "text", text: "Hai di grup" };
+      }) as any,
+    });
+    await handleUserMessage(env, "wa-group:120@g.us", config, {
+      text: "pindah topik belanja kaos",
+      chatContext: "group",
+    }, d);
+    expect(d.getConversationContext).not.toHaveBeenCalled();
+    expect(d.saveConversationContext).not.toHaveBeenCalled();
   });
 });

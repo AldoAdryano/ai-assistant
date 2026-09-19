@@ -1,7 +1,23 @@
 import { generateChatReply, GeminiApiError } from "./gemini";
 import type { ChatReply } from "./gemini";
 import { NotionRejectionError, NotionUnknownError, createNote, createTask, listActiveTasks, getAllTasks, getAllNotes, listMemoryContext, recallMemory, upsertMemory, getAllMemory, updateTask, archiveTask, addRoutine } from "./notion";
-import { getInteractionId, saveInteractionId, getChatLog, saveChatLog, clearMemory, getPendingDelete, savePendingDelete, clearPendingDelete, getPendingMemory, savePendingMemory, clearPendingMemory, CHAT_LOG_MAX_CHARS } from "./state";
+import {
+  getInteractionId,
+  saveInteractionId,
+  getChatLog,
+  saveChatLog,
+  clearMemory,
+  getPendingDelete,
+  savePendingDelete,
+  clearPendingDelete,
+  getPendingMemory,
+  savePendingMemory,
+  clearPendingMemory,
+  getConversationContext,
+  saveConversationContext,
+  clearConversationContext,
+  CHAT_LOG_MAX_CHARS,
+} from "./state";
 import {
   buildDeleteTitleSummary,
   filterCreateTaskCalls,
@@ -14,6 +30,7 @@ import {
   stripInventedDueDate,
 } from "./action-safety";
 import type { PendingDelete, PendingMemory } from "./action-safety";
+import { applyTopicSwitch, detectExplicitTopicSwitch, type ConversationContext } from "./conversation-context";
 import { parseIndonesianDeadline, parseIndonesianNaturalDate } from "./date";
 import type { AppConfig, Env } from "./types";
 
@@ -31,8 +48,16 @@ export interface RouterDeps {
   getChatLog: typeof getChatLog; saveChatLog: typeof saveChatLog; clearMemory: typeof clearMemory;
   getPendingDelete: typeof getPendingDelete; savePendingDelete: typeof savePendingDelete; clearPendingDelete: typeof clearPendingDelete;
   getPendingMemory: typeof getPendingMemory; savePendingMemory: typeof savePendingMemory; clearPendingMemory: typeof clearPendingMemory;
+  getConversationContext: typeof getConversationContext;
+  saveConversationContext: typeof saveConversationContext;
+  clearConversationContext: typeof clearConversationContext;
 }
-const defaultDeps: RouterDeps = { createNote, createTask, listActiveTasks, getAllTasks, getAllNotes, upsertMemory, recallMemory, listMemoryContext, getAllMemory, updateTask, archiveTask, addRoutine, generateChatReply, parseIndonesianDeadline, parseIndonesianNaturalDate, getInteractionId, saveInteractionId, getChatLog, saveChatLog, clearMemory, getPendingDelete, savePendingDelete, clearPendingDelete, getPendingMemory, savePendingMemory, clearPendingMemory };
+const defaultDeps: RouterDeps = {
+  createNote, createTask, listActiveTasks, getAllTasks, getAllNotes, upsertMemory, recallMemory, listMemoryContext, getAllMemory, updateTask, archiveTask, addRoutine,
+  generateChatReply, parseIndonesianDeadline, parseIndonesianNaturalDate, getInteractionId, saveInteractionId, getChatLog, saveChatLog, clearMemory,
+  getPendingDelete, savePendingDelete, clearPendingDelete, getPendingMemory, savePendingMemory, clearPendingMemory,
+  getConversationContext, saveConversationContext, clearConversationContext,
+};
 const HELP = ["Perintah V1 (AI-Driven):", "• /start atau /help", "• Kirim apa saja, AI akan mengurus sisanya (catatan, tugas, memori)."].join("\n");
 
 const DELETE_TOOL_NAMES = new Set([
@@ -115,6 +140,16 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
       }
     }
 
+    let conversationContext: ConversationContext | null = null;
+    if (!isGroup) {
+      conversationContext = await deps.getConversationContext(env, userId);
+      const detectedSwitch = detectExplicitTopicSwitch(normalizedText);
+      if (detectedSwitch) {
+        conversationContext = applyTopicSwitch(conversationContext, detectedSwitch.topic);
+        await deps.saveConversationContext(env, userId, conversationContext);
+      }
+    }
+
     const [tasks, memories, previousInteractionId, chatLog] = isGroup
       ? [[], [], null as string | null, await deps.getChatLog(env, userId)]
       : await Promise.all([
@@ -157,7 +192,12 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
           reply = await deps.generateChatReply(
             config,
             msgPayload,
-            { tasks, memories, chatContext: isGroup ? "group" : "dm" },
+            {
+              tasks,
+              memories,
+              chatContext: isGroup ? "group" : "dm",
+              conversation: isGroup ? null : conversationContext,
+            },
             isGroup ? null : currentPreviousId,
           );
           generateErr = null;
@@ -235,6 +275,7 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
         const callsToProcess = filtered.allowed;
         let pendingDeleteSavedThisTurn = false;
         let pendingMemorySavedThisTurn = false;
+        let topicUpdatedThisTurn = false;
         for (const call of callsToProcess) {
           const callSignature = call.name + JSON.stringify(call.args);
           if (executedTools.has(callSignature)) {
@@ -503,6 +544,18 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
                 );
                 break;
               }
+              case "set_conversation_topic": {
+                const topic = typeof call.args.topic === "string" ? call.args.topic.trim() : "";
+                if (!topic) {
+                  replyMessages.push("[System]: topic missing; provide a non-empty topic.");
+                  break;
+                }
+                conversationContext = applyTopicSwitch(conversationContext, topic);
+                await deps.saveConversationContext(env, userId, conversationContext);
+                topicUpdatedThisTurn = true;
+                replyMessages.push(`[System]: topic updated to ${topic}`);
+                break;
+              }
               default:
                 replyMessages.push(`Fungsi ${call.name} tidak dikenali.`);
             }
@@ -525,6 +578,8 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
         
         if (isWaitingForClarification) {
           currentInput = `CONVERSATION HISTORY:\n${currentLog}\n\n[ACTION REQUIRED] System Observation: Needs clarification. Output: ${toolResultString}. Ask the user for the missing details in natural Indonesian.`;
+        } else if (topicUpdatedThisTurn && replyMessages.every((m) => m.startsWith("[System]:"))) {
+          currentInput = `CONVERSATION HISTORY:\n${currentLog}\n\n[ACTION REQUIRED] Conversation topic was updated. Continue responding to the latest User message in the new topic. Do not call set_conversation_topic again unless the subject changes again.`;
         } else {
            // Fungsi sukses dieksekusi, kita tidak perlu jawaban LLM lagi, jadikan ini jawaban akhir
            finalResponse = toolResultString;

@@ -63,6 +63,10 @@ export function getConfig(env: Env): AppConfig {
     notionRoutineDbId: typeof env.NOTION_ROUTINE_DB_ID === "string" && env.NOTION_ROUTINE_DB_ID.trim() !== "" 
       ? env.NOTION_ROUTINE_DB_ID.trim() 
       : "3cf7d9b437a8808fa3cac01a6bd90919",
+    notionProjectsDataSourceId:
+      typeof env.NOTION_PROJECTS_DATA_SOURCE_ID === "string" && env.NOTION_PROJECTS_DATA_SOURCE_ID.trim() !== ""
+        ? env.NOTION_PROJECTS_DATA_SOURCE_ID.trim()
+        : null,
     telegramBotToken: required("TELEGRAM_BOT_TOKEN", env.TELEGRAM_BOT_TOKEN),
     telegramWebhookSecret,
     allowedTelegramUserId,

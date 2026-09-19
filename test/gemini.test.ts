@@ -1,6 +1,6 @@
 import { expect, it, vi } from "vitest";
 import type { AppConfig } from "../src/types";
-import { generateChatReply, GeminiApiError } from "../src/gemini";
+import { formatMemoriesForPrompt, generateChatReply, GeminiApiError } from "../src/gemini";
 
 const config = { geminiApiKey: "gemini-key", geminiModel: "gemini-3.5-flash-lite" } as AppConfig;
 function interaction(text: string): Response {
@@ -8,6 +8,17 @@ function interaction(text: string): Response {
     candidates: [{ content: { parts: [{ text }] } }]
   }), { status: 200 });
 }
+
+it("formatMemoriesForPrompt groups by category and caps lines", () => {
+  const formatted = formatMemoriesForPrompt([
+    { id: "1", key: "universitas", value: "UNY", category: "Identity" },
+    { id: "2", key: "makanan", value: "nasi goreng", category: "Preference" },
+    { id: "3", key: "legacy", value: "old row", category: "Profile" },
+  ]);
+  expect(formatted.indexOf("[Identity]")).toBeLessThan(formatted.indexOf("[Preference]"));
+  expect(formatted).toContain("[Profile]");
+  expect(formatted.split("\n").length).toBeLessThanOrEqual(12);
+});
 
 it("builds a stateless chat prompt with task and memory context", async () => {
   let requestBody: any;
@@ -23,6 +34,8 @@ it("builds a stateless chat prompt with task and memory context", async () => {
     expect.fail("Expected text reply");
   }
   expect(requestBody.systemInstruction.parts[0].text).toContain("asisten pribadi");
+  expect(requestBody.systemInstruction.parts[0].text).toContain("MEMORY 2.0");
+  expect(requestBody.systemInstruction.parts[0].text).toContain("[Project]");
 });
 
 it("extracts function calls correctly", async () => {

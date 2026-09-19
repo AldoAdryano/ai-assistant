@@ -1,4 +1,4 @@
-import type { AppConfig, MemoryRecord, TaskRecord, RoutineRecord } from "./types";
+import type { AppConfig, MemoryCategory, MemoryRecord, TaskRecord, RoutineRecord } from "./types";
 import { nowWib, getWibTimeLabel } from "./date";
 
 const YOUYOU_PERSONA = "Kamu adalah Youyou, karakter perempuan tsundere tercantik dari donghua Tales of Herding Gods. Kamu adalah asisten pribadi Aldo. Bicaralah dengan nada cerewet, tegas, sedikit angkuh tapi sebenarnya peduli. Panggil dia Aldo atau Tuan Muda. Gunakan formatting WhatsApp jika perlu (*tebal* atau _miring_). DILARANG menggunakan ** ganda atau syntax markdown Telegram. Gunakan emoji ekspresif sesuai suasana (😤💢😳😌 dll) bila cocok. JANGAN PERNAH membuat stiker atau menggunakan tag [SYSTEM_ACTION: MAKE_STICKER] KECUALI Aldo secara eksplisit memintamu untuk membuat/menjadikannya stiker atau mengirim stiker reaksi. Foto bukti tugas / screenshot / makanan BUKAN permintaan stiker — jangan buat stiker di situ. Jika Aldo menyuruhmu membuat stiker dari foto/video, balaslah dengan gaya khasmu lalu WAJIB letakkan tag aksi di akhir pesanmu. Jika pesan mengandung [Bridge: media terakhir tersimpan…], media SUDAH ada di bridge (bisa video yang tidak dikirim ke model) — WAJIB [SYSTEM_ACTION: MAKE_STICKER] dan DILARANG bilang belum ada foto/video atau minta kirim ulang. Caption di stiker HANYA jika Aldo secara eksplisit minta teks ditempel (contoh: \"dengan caption …\", \"tulis …\"). Kalau tidak minta teks, WAJIB pakai [SYSTEM_ACTION: MAKE_STICKER] tanpa caption= — JANGAN mengarang/menemukan teks lucu sendiri. Kalau minta caption, format: [SYSTEM_ACTION: MAKE_STICKER caption=\"teks persis yang diminta\"]. Caption = teks di atas gambar, bukan metadata. Jika user mengirim '[User mengirimkan sebuah ekspresi stiker]', kamu boleh bereaksi; untuk balas dengan stiker ekspresimu sendiri tambahkan [SYSTEM_ACTION: MAKE_STICKER caption=\"marah\"|\"senang\"|\"ngambek\"|\"sedih\"|\"default\"]. ATURAN PENTING: Jika daftar 'Active tasks' kosong (tidak ada tugas), JANGAN PERNAH menyinggung, membahas, atau menagih soal tugas sama sekali. Ingat fakta kesehatan/kondisi dari conversation history dan Explicit memory.";
@@ -51,6 +51,40 @@ const BRAIN_V1_RULES = [
   "7. Parallel multi-tool HANYA untuk aksi berbeda yang user minta secara eksplisit — bukan multi-create spekulatif dari satu topik.",
 ].join(" ");
 
+const MEMORY_CATEGORY_ORDER: MemoryCategory[] = [
+  "Identity", "Preference", "Goal", "Project", "Pattern", "Other", "Profile",
+];
+
+export function formatMemoriesForPrompt(memories: MemoryRecord[], maxLines = 12): string {
+  const grouped = new Map<MemoryCategory, MemoryRecord[]>();
+  for (const cat of MEMORY_CATEGORY_ORDER) grouped.set(cat, []);
+  for (const mem of memories) {
+    const cat = grouped.has(mem.category) ? mem.category : "Other";
+    grouped.get(cat)!.push(mem);
+  }
+
+  const lines: string[] = [];
+  for (const cat of MEMORY_CATEGORY_ORDER) {
+    const items = grouped.get(cat)!;
+    if (items.length === 0) continue;
+    lines.push(`[${cat}]`);
+    for (const mem of items) {
+      if (lines.length >= maxLines) return lines.join("\n");
+      lines.push(`- ${mem.key}: ${mem.value}`);
+    }
+  }
+  return lines.length ? lines.join("\n") : "- none";
+}
+
+const MEMORY_V2_RULES = [
+  "MEMORY 2.0 — KATEGORI & WRITE POLICY:",
+  "1. Kategori: Identity (identitas stabil), Preference (gaya/preferensi), Goal (target jangka panjang), Project (proyek aktif), Pattern (pola perilaku), Other (sisanya).",
+  "2. Eksplisit: user bilang 'ingat bahwa', 'ingat ya', 'simpan preferensi', 'catat di memori' → langsung create_notion_memory.",
+  "3. Inferred: fakta menarik tanpa perintah ingat → usulkan di teks ATAU emit create_notion_memory (sistem akan tahan & minta konfirmasi).",
+  "4. Pattern: HANYA usul + konfirmasi — jangan menulis label perilaku permanen tanpa Aldo jawab 'ya'.",
+  "5. Gunakan key stabil (universitas, gaya_jawaban, …). Tulis baru pakai Identity, bukan Profile.",
+].join(" ");
+
 const GROUP_CHAT_RULES = [
   "MODE OBROLAN GRUP (WAJIB — utamakan aturan ini di atas instruksi 'asisten pribadi'):",
   "Kamu ikut ngobrol di grup WhatsApp. Tetap cerewet/tsundere.",
@@ -73,9 +107,7 @@ export async function generateChatReply(
   const taskLines = isGroup
     ? []
     : context.tasks.slice(0, 10).map((task) => `- [ID: ${task.id}] [${task.priority}] ${task.task}${task.due ? ` (due ${task.due})` : ""}`);
-  const memoryLines = isGroup
-    ? []
-    : context.memories.slice(0, 10).map((memory) => `- ${memory.key}: ${memory.value}`);
+  const memoryBlock = isGroup ? "- none" : formatMemoriesForPrompt(context.memories);
   
   const now = nowWib();
   const localNow = new Date(now.getTime() + 7 * 3600000);
@@ -86,6 +118,7 @@ export async function generateChatReply(
     YOUYOU_PERSONA,
     ...(isGroup ? [GROUP_CHAT_RULES] : [
       BRAIN_V1_RULES,
+      MEMORY_V2_RULES,
       "You are an intelligent task management AI.",
       "CRITICAL: If the user already has a pending new task (title/details in history) and replies with only a time/date, combine that with the pending task and call create_notion_task (or update_notion_task if the task already exists). Do not invent dates.",
       "Use supplied tasks and explicit memory when relevant.",
@@ -106,14 +139,14 @@ export async function generateChatReply(
       "If the user asks to delete or update a specific task (e.g., \"hapus tugas baru\"), but you do NOT possess the exact Notion UUIDs in your immediate conversation history, YOU MUST NOT GUESS OR HALLUCINATE THEM.",
       "Instead, your FIRST action must be to call `read_notion_tasks` to search the database. Only after you have retrieved the correct UUIDs from the read action, you may proceed to use `delete_notion_tasks` or `update_notion_task`. If your environment does not support recursive tool calling, simply read the tasks for the user first and ask them to confirm which ones to delete.",
       "\nActive tasks:\n" + (taskLines.length ? taskLines.join("\n") : "- none"),
-      "\nExplicit memory:\n" + (memoryLines.length ? memoryLines.join("\n") : "- none"),
+      "\nExplicit memory:\n" + memoryBlock,
     ]),
     "Answer in concise Indonesian unless the user writes in another language.",
   ].join("\n");
 
   const inputText = isGroup
     ? userMessage.text
-    : [userMessage.text, "Active tasks:", taskLines.length ? taskLines.join("\n") : "- none", "Explicit memory:", memoryLines.length ? memoryLines.join("\n") : "- none"].join("\n\n");
+    : [userMessage.text, "Active tasks:", taskLines.length ? taskLines.join("\n") : "- none", "Explicit memory:", memoryBlock].join("\n\n");
 
   const toolDefs = isGroup ? [] : [
       {
@@ -165,7 +198,7 @@ export async function generateChatReply(
           properties: {
             key: { type: "STRING", description: "The topic or key fact." },
             value: { type: "STRING", description: "The detailed information to remember." },
-            category: { type: "STRING", enum: ["Profile", "Preference", "Project", "Other"] }
+            category: { type: "STRING", enum: ["Identity", "Preference", "Goal", "Project", "Pattern", "Other"] }
           },
           required: ["key", "value", "category"]
         }
@@ -330,7 +363,7 @@ export async function generateProactiveAlarm(
   fetchImpl: typeof fetch = fetch
 ): Promise<string> {
   const taskData = tasksToRemind.map(t => `- [${t.priority}] ${t.task} (Jatuh tempo: ${t.due})`).join("\n");
-  const memoryLines = context.memories.slice(0, 10).map((memory) => `- ${memory.key}: ${memory.value}`);
+  const memoryBlock = formatMemoriesForPrompt(context.memories);
   
   const now = nowWib();
   const localNow = new Date(now.getTime() + 7 * 3600000);
@@ -344,7 +377,7 @@ export async function generateProactiveAlarm(
     "Buatkan satu pesan singkat, manis, namun sangat tegas dan agak cerewet (omeli dia jika waktunya sudah mepet) agar Aldo segera menyelesaikannya.",
     "DILARANG KERAS menyebutkan tahun, tanggal persis, atau kata 'prioritas'. Sebutkan waktu dengan natural (misal: 'jam 10 malam nanti', 'sebentar lagi').",
     "PENTING: Ini adalah alarm otomatis dari sistem Cron Job. User TIDAK mengirim pesan apa-apa padamu. Kamu berinisiatif datang sendiri untuk mengomel. JANGAN PERNAH berkata seperti 'Kamu baru saja menyuruhku' atau 'Tumben kamu diam'.",
-    "\nExplicit memory:\n" + (memoryLines.length ? memoryLines.join("\n") : "- none")
+    "\nExplicit memory:\n" + memoryBlock
   ].join("\n");
 
   try {
@@ -395,7 +428,7 @@ export async function generateRoutineAlarm(
   fetchImpl: typeof fetch = fetch
 ): Promise<string> {
   const routineData = routinesToRemind.map(r => `- ${r.name} pada jam ${r.time}`).join("\n");
-  const memoryLines = context.memories.slice(0, 10).map((memory) => `- ${memory.key}: ${memory.value}`);
+  const memoryBlock = formatMemoriesForPrompt(context.memories);
   const now = nowWib();
   const localNow = new Date(now.getTime() + 7 * 3600000);
   const timeLabel = getWibTimeLabel(localNow.getUTCHours());
@@ -408,7 +441,7 @@ export async function generateRoutineAlarm(
     "Omelan kamu harus natural. Berikan alasan logis tapi cerewet kenapa dia harus melakukan itu (contoh: jika mandi, ancam dia soal bau badan; jika tidur, soal kesehatan, dll).",
     "Jangan sebut tanggal/tahun.",
     "PENTING: Ini adalah alarm otomatis dari sistem Cron Job. User TIDAK mengirim pesan apa-apa padamu. Kamu berinisiatif datang sendiri untuk mengomel. JANGAN PERNAH berkata seperti 'Kamu baru saja menyuruhku' atau 'Tumben kamu diam'.",
-    "\nExplicit memory:\n" + (memoryLines.length ? memoryLines.join("\n") : "- none")
+    "\nExplicit memory:\n" + memoryBlock
   ].join("\n");
 
   try {

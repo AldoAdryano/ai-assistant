@@ -2,11 +2,15 @@ import { describe, expect, it } from "vitest";
 import {
   buildDeleteTitleSummary,
   filterCreateTaskCalls,
+  formatMemoryPropose,
   isPendingDeleteFresh,
+  isPendingMemoryFresh,
   isPositiveDeleteConfirm,
   isNegativeDeleteConfirm,
   PENDING_DELETE_FRESH_MS,
+  shouldConfirmMemoryWrite,
   userExplicitMultiCreate,
+  userExplicitRemember,
   userMentionsDeadline,
   stripInventedDueDate,
 } from "../src/action-safety";
@@ -133,5 +137,81 @@ describe("userMentionsDeadline / stripInventedDueDate", () => {
     const r = stripInventedDueDate(call, "buat tugas laprak deadline besok");
     expect(r.stripped).toBe(false);
     expect(r.call.args.due_date).toBe("besok");
+  });
+});
+
+describe("userExplicitRemember", () => {
+  it("explicit remember phrases", () => {
+    expect(userExplicitRemember("Ingat bahwa kuliah saya di UNY")).toBe(true);
+    expect(userExplicitRemember("ingat ya aku suka jawaban singkat")).toBe(true);
+    expect(userExplicitRemember("simpan preferensi bahasa Indonesia")).toBe(true);
+    expect(userExplicitRemember("simpan memori kampus UNY")).toBe(true);
+    expect(userExplicitRemember("catat di memori proyek Werkudhara")).toBe(true);
+    expect(userExplicitRemember("remember that I study at UNY")).toBe(true);
+    expect(userExplicitRemember("aku kuliah di UNY")).toBe(false);
+    expect(userExplicitRemember("kuliah saya di UNY")).toBe(false);
+  });
+});
+
+describe("shouldConfirmMemoryWrite", () => {
+  it("Pattern always confirms", () => {
+    expect(
+      shouldConfirmMemoryWrite({ userText: "ingat bahwa saya sering menunda", category: "Pattern" }),
+    ).toBe(true);
+  });
+
+  it("explicit non-Pattern skips confirm", () => {
+    expect(shouldConfirmMemoryWrite({ userText: "ingat bahwa kuliah UNY", category: "Identity" })).toBe(
+      false,
+    );
+  });
+
+  it("inferred non-Pattern requires confirm", () => {
+    expect(shouldConfirmMemoryWrite({ userText: "kuliah saya di UNY", category: "Identity" })).toBe(true);
+    expect(shouldConfirmMemoryWrite({ userText: "aku suka jawaban singkat", category: "Preference" })).toBe(
+      true,
+    );
+  });
+});
+
+describe("formatMemoryPropose", () => {
+  it("proposes memory in Indonesian with ya/jangan", () => {
+    const msg = formatMemoryPropose({
+      key: "universitas",
+      value: "UNY",
+      category: "Identity",
+      createdAt: Date.now(),
+    });
+    expect(msg).toMatch(/universitas/i);
+    expect(msg).toMatch(/UNY/);
+    expect(msg).toMatch(/ya/i);
+    expect(msg).toMatch(/jangan/i);
+  });
+});
+
+describe("pending memory freshness", () => {
+  it("fresh within 10 minutes", () => {
+    const now = 1_700_000_000_000;
+    expect(
+      isPendingMemoryFresh(
+        { key: "kampus", value: "UNY", category: "Identity", createdAt: now - 60_000 },
+        now,
+      ),
+    ).toBe(true);
+  });
+
+  it("stale after 10 minutes", () => {
+    const now = 1_700_000_000_000;
+    expect(
+      isPendingMemoryFresh(
+        {
+          key: "kampus",
+          value: "UNY",
+          category: "Identity",
+          createdAt: now - PENDING_DELETE_FRESH_MS - 1,
+        },
+        now,
+      ),
+    ).toBe(false);
   });
 });

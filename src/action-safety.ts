@@ -1,7 +1,16 @@
+import type { MemoryCategory } from "./types";
+
 export type PendingDelete = {
   kind: "tasks" | "notes" | "memory";
   ids: string[];
   summary: string;
+  createdAt: number;
+};
+
+export type PendingMemory = {
+  key: string;
+  value: string;
+  category: Exclude<MemoryCategory, "Profile">;
   createdAt: number;
 };
 
@@ -118,6 +127,31 @@ export function stripInventedDueDate<T extends { name: string; args: any }>(
 }
 
 export function isPendingDeleteFresh(pending: PendingDelete, now = Date.now()): boolean {
+  return now - pending.createdAt <= PENDING_DELETE_FRESH_MS;
+}
+
+const EXPLICIT_REMEMBER =
+  /\b(ingat\s+bahwa|ingat\s+ya|simpan\s+(?:preferensi|memori)|catat\s+di\s+memori|remember\s+that)\b/i;
+
+export function userExplicitRemember(userText: string): boolean {
+  return EXPLICIT_REMEMBER.test(userText.trim());
+}
+
+export function shouldConfirmMemoryWrite(input: {
+  userText: string;
+  category: string;
+}): boolean {
+  if (input.category === "Pattern") {
+    return true;
+  }
+  return !userExplicitRemember(input.userText);
+}
+
+export function formatMemoryPropose(pending: PendingMemory): string {
+  return `Aldo, mau aku ingat *${pending.key}*: ${pending.value} (${pending.category})? Balas "ya" atau "jangan".`;
+}
+
+export function isPendingMemoryFresh(pending: PendingMemory, now = Date.now()): boolean {
   return now - pending.createdAt <= PENDING_DELETE_FRESH_MS;
 }
 

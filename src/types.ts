@@ -10,7 +10,14 @@ export type IntentType =
 
 export type Priority = "Low" | "Medium" | "High";
 export type NoteType = "Idea" | "Note";
-export type MemoryCategory = "Profile" | "Preference" | "Project" | "Other";
+export type MemoryCategory =
+  | "Identity"
+  | "Preference"
+  | "Goal"
+  | "Project"
+  | "Pattern"
+  | "Other"
+  | "Profile"; // legacy read
 
 export interface Env {
   DEDUP_KV: KVNamespace;

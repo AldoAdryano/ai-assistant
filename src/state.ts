@@ -1,4 +1,5 @@
 import type { PendingDelete, PendingMemory } from "./action-safety";
+import type { ConversationContext } from "./conversation-context";
 import type { Env, NormalizedTaskResult } from "./types";
 
 const TTL_SECONDS = 3600;
@@ -105,10 +106,44 @@ export async function getChatLog(env: Env, userId: number | string): Promise<str
   return data || null;
 }
 
+function getConversationContextKey(userId: number | string): string {
+  return `conversation_context:${userId}`;
+}
+
+export async function saveConversationContext(
+  env: Env,
+  userId: number | string,
+  context: ConversationContext,
+): Promise<void> {
+  await env.DEDUP_KV.put(getConversationContextKey(userId), JSON.stringify(context), {
+    expirationTtl: CHAT_LOG_TTL_SECONDS,
+  });
+}
+
+export async function getConversationContext(
+  env: Env,
+  userId: number | string,
+): Promise<ConversationContext | null> {
+  const data = await env.DEDUP_KV.get(getConversationContextKey(userId));
+  if (!data) {
+    return null;
+  }
+  try {
+    return JSON.parse(data) as ConversationContext;
+  } catch {
+    return null;
+  }
+}
+
+export async function clearConversationContext(env: Env, userId: number | string): Promise<void> {
+  await env.DEDUP_KV.delete(getConversationContextKey(userId));
+}
+
 export async function clearMemory(env: Env, userId: number | string): Promise<void> {
   await Promise.all([
     env.DEDUP_KV.delete(getInteractionKey(userId)),
     env.DEDUP_KV.delete(getChatLogKey(userId)),
+    env.DEDUP_KV.delete(getConversationContextKey(userId)),
     env.DEDUP_KV.delete(getPendingDeleteKey(userId)),
     env.DEDUP_KV.delete(getPendingMemoryKey(userId)),
   ]);

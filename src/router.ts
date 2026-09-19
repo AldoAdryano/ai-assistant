@@ -175,7 +175,12 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
           deps.listMemoryContext(config),
           deps.getInteractionId(env, userId),
           deps.getChatLog(env, userId),
-          projectsEnabled ? deps.listProjects(config) : Promise.resolve([] as ProjectRecord[]),
+          projectsEnabled
+            ? deps.listProjects(config).catch((err) => {
+                console.error("listProjects failed (continuing without projects)", err);
+                return [] as ProjectRecord[];
+              })
+            : Promise.resolve([] as ProjectRecord[]),
         ]);
     if (projectsEnabled) {
       projects = loadedProjects;

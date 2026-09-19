@@ -183,11 +183,19 @@ export async function getAllNotes(config: AppConfig, fetchImpl: typeof fetch = f
   }).filter((note): note is { id: string; title: string } => note !== null);
 }
 
+const MEMORY_CATEGORIES: ReadonlySet<MemoryCategory> = new Set([
+  "Identity", "Preference", "Goal", "Project", "Pattern", "Other", "Profile",
+]);
+
+function isMemoryCategory(value: string): value is MemoryCategory {
+  return MEMORY_CATEGORIES.has(value as MemoryCategory);
+}
+
 function mapMemory(page: any): MemoryRecord | null {
   const key = titleText(page.properties?.Key);
   const value = richText(page.properties?.Value);
   const category = page.properties?.Category?.select?.name;
-  if (!key || !value || (category !== "Profile" && category !== "Preference" && category !== "Project" && category !== "Other")) return null;
+  if (!key || !value || typeof category !== "string" || !isMemoryCategory(category)) return null;
   return { id: page.id, key, value, category };
 }
 

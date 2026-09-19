@@ -1,6 +1,6 @@
 import { expect, it, vi } from "vitest";
 import type { AppConfig } from "../src/types";
-import { NotionRejectionError, NotionUnknownError, createNote, createTask, listActiveTasks, recallMemory, upsertMemory, updateTask, archiveTask } from "../src/notion";
+import { NotionRejectionError, NotionUnknownError, createNote, createTask, listActiveTasks, listMemoryContext, recallMemory, upsertMemory, updateTask, archiveTask } from "../src/notion";
 
 const config: AppConfig = {
   geminiApiKey: "gemini-key", geminiModel: "gemini-3.5-flash-lite",
@@ -118,8 +118,36 @@ it("recalls matching memory by key or value", async () => {
   expect(memories[0]).toMatchObject({ key: "topik utama", value: "personal AI WhatsApp" });
 });
 
+it("keeps Memory 2.0 categories when mapping list results", async () => {
+  const fakeFetch: typeof fetch = async () => new Response(JSON.stringify({ results: [
+    { id: "memory-identity", properties: memoryProperties("nama", "YouYou", "Identity") },
+    { id: "memory-goal", properties: memoryProperties("target", "ship memory 2.0", "Goal") },
+    { id: "memory-invalid", properties: memoryProperties("bad", "dropped", "Unknown") },
+  ] }), { status: 200 });
+  const memories = await listMemoryContext(config, fakeFetch);
+  expect(memories).toEqual([
+    { id: "memory-identity", key: "nama", value: "YouYou", category: "Identity" },
+    { id: "memory-goal", key: "target", value: "ship memory 2.0", category: "Goal" },
+  ]);
+});
+
+it("upserts Memory 2.0 categories", async () => {
+  let patchBody: any;
+  const fakeFetch: typeof fetch = async (input, init) => {
+    if (String(input).endsWith("/query")) return new Response(JSON.stringify({ results: [{ id: "memory-page", properties: {} }] }), { status: 200 });
+    patchBody = JSON.parse(String(init?.body));
+    return new Response(JSON.stringify({ id: "memory-page" }), { status: 200 });
+  };
+  await upsertMemory(config, { key: "nama", value: "YouYou", category: "Identity" }, fakeFetch);
+  expect(patchBody.properties.Category.select.name).toBe("Identity");
+});
+
 function taskProperties(task: string, priority: string, status: string) {
   return { Task: { title: [{ plain_text: task }] }, Status: { select: { name: status } }, Priority: { select: { name: priority } }, Due: { date: null } };
+}
+
+function memoryProperties(key: string, value: string, category: string) {
+  return { Key: { title: [{ plain_text: key }] }, Value: { rich_text: [{ plain_text: value }] }, Category: { select: { name: category } } };
 }
 
 it("throws NotionRejectionError for 400 responses and sanitizes logs", async () => {

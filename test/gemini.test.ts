@@ -1,6 +1,6 @@
 import { expect, it, vi } from "vitest";
 import type { AppConfig } from "../src/types";
-import { formatMemoriesForPrompt, generateChatReply, GeminiApiError } from "../src/gemini";
+import { formatConversationContextForPrompt, formatMemoriesForPrompt, generateChatReply, GeminiApiError } from "../src/gemini";
 
 const config = { geminiApiKey: "gemini-key", geminiModel: "gemini-3.5-flash-lite" } as AppConfig;
 function interaction(text: string): Response {
@@ -8,6 +8,22 @@ function interaction(text: string): Response {
     candidates: [{ content: { parts: [{ text }] } }]
   }), { status: 200 });
 }
+
+it("formatConversationContextForPrompt renders current and previous topics", () => {
+  expect(formatConversationContextForPrompt(null)).toBe("CURRENT TOPIC: general\nPREVIOUS TOPIC: none");
+  expect(formatConversationContextForPrompt({
+    currentTopic: "belanja kaos",
+    previousTopic: "drone project",
+    activeTaskHint: null,
+    updatedAt: 1,
+  })).toBe("CURRENT TOPIC: belanja kaos\nPREVIOUS TOPIC: drone project");
+  expect(formatConversationContextForPrompt({
+    currentTopic: "general",
+    previousTopic: null,
+    activeTaskHint: null,
+    updatedAt: 1,
+  })).toBe("CURRENT TOPIC: general\nPREVIOUS TOPIC: none");
+});
 
 it("formatMemoriesForPrompt groups by category and caps lines", () => {
   const formatted = formatMemoriesForPrompt([
@@ -26,16 +42,39 @@ it("builds a stateless chat prompt with task and memory context", async () => {
   const reply = await generateChatReply(config, { text: "Mulai dari mana?" }, {
     tasks: [{ id: "1", task: "Revisi Bab 2", status: "To Do", priority: "High" }],
     memories: [{ id: "2", key: "topik", value: "personal AI", category: "Project" }],
+    conversation: { currentTopic: "tugas kuliah", previousTopic: "drone", activeTaskHint: null, updatedAt: 1 },
   }, undefined, fakeFetch);
-  
+
   if (reply.type === "text") {
     expect(reply.text).toContain("prioritas High");
   } else {
     expect.fail("Expected text reply");
   }
-  expect(requestBody.systemInstruction.parts[0].text).toContain("asisten pribadi");
-  expect(requestBody.systemInstruction.parts[0].text).toContain("MEMORY 2.0");
-  expect(requestBody.systemInstruction.parts[0].text).toContain("[Project]");
+  const systemText = requestBody.systemInstruction.parts[0].text;
+  expect(systemText).toContain("asisten pribadi");
+  expect(systemText).toContain("MEMORY 2.0");
+  expect(systemText).toContain("[Project]");
+  expect(systemText).toContain("CURRENT TOPIC: tugas kuliah");
+  expect(systemText).toContain("PREVIOUS TOPIC: drone");
+  expect(systemText).toContain("CONTEXT MANAGER");
+  const toolNames = requestBody.tools[0].functionDeclarations.map((t: { name: string }) => t.name);
+  expect(toolNames).toContain("set_conversation_topic");
+});
+
+it("skips conversation topic injection and tool in group chat", async () => {
+  let requestBody: any;
+  const fakeFetch: typeof fetch = async (_input, init) => { requestBody = JSON.parse(String(init?.body)); return interaction("Halo grup!"); };
+  await generateChatReply(config, { text: "Halo semua" }, {
+    tasks: [{ id: "1", task: "Secret task", status: "To Do", priority: "High" }],
+    memories: [{ id: "2", key: "privasi", value: "rahasia", category: "Identity" }],
+    chatContext: "group",
+    conversation: { currentTopic: "should not appear", previousTopic: "also hidden", activeTaskHint: null, updatedAt: 1 },
+  }, undefined, fakeFetch);
+  const systemText = requestBody.systemInstruction.parts[0].text;
+  expect(systemText).toContain("MODE OBROLAN GRUP");
+  expect(systemText).not.toContain("CURRENT TOPIC");
+  expect(systemText).not.toContain("CONTEXT MANAGER");
+  expect(requestBody.tools).toBeUndefined();
 });
 
 it("extracts function calls correctly", async () => {

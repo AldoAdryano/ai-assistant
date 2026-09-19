@@ -1,3 +1,4 @@
+import type { ConversationContext } from "./conversation-context";
 import type { AppConfig, MemoryCategory, MemoryRecord, TaskRecord, RoutineRecord } from "./types";
 import { nowWib, getWibTimeLabel } from "./date";
 
@@ -85,6 +86,20 @@ const MEMORY_V2_RULES = [
   "5. Gunakan key stabil (universitas, gaya_jawaban, …). Tulis baru pakai Identity, bukan Profile.",
 ].join(" ");
 
+const CONVERSATION_TOPIC_RULES = [
+  "CONTEXT MANAGER — TOPIC AWARENESS (DM):",
+  "1. Utamakan jawaban pada CURRENT TOPIC.",
+  "2. Sebut PREVIOUS TOPIC hanya jika Aldo membawanya kembali atau memang relevan.",
+  "3. Jangan mengomel/menagih tugas atau urusan dari topik lama kecuali diminta atau Aldo kembali ke topik itu.",
+  "4. Panggil set_conversation_topic HANYA jika subjek obrolan benar-benar berganti (bukan klarifikasi deadline/tanggal/jam untuk tugas yang sama, bukan konfirmasi ya/tidak pendek).",
+].join(" ");
+
+export function formatConversationContextForPrompt(ctx: ConversationContext | null): string {
+  const current = ctx?.currentTopic?.trim() || "general";
+  const previous = ctx?.previousTopic?.trim() || "none";
+  return [`CURRENT TOPIC: ${current}`, `PREVIOUS TOPIC: ${previous}`].join("\n");
+}
+
 const GROUP_CHAT_RULES = [
   "MODE OBROLAN GRUP (WAJIB — utamakan aturan ini di atas instruksi 'asisten pribadi'):",
   "Kamu ikut ngobrol di grup WhatsApp. Tetap cerewet/tsundere.",
@@ -99,7 +114,7 @@ const GROUP_CHAT_RULES = [
 export async function generateChatReply(
   config: AppConfig,
   userMessage: { text: string; imageBase64?: string; audioBase64?: string },
-  context: { tasks: TaskRecord[]; memories: MemoryRecord[]; chatContext?: "dm" | "group" },
+  context: { tasks: TaskRecord[]; memories: MemoryRecord[]; chatContext?: "dm" | "group"; conversation?: ConversationContext | null },
   previousInteractionId?: string | null,
   fetchImpl: typeof fetch = fetch,
 ): Promise<ChatReply> {
@@ -117,6 +132,8 @@ export async function generateChatReply(
     `Waktu saat ini (WIB): ${todayStr}`,
     YOUYOU_PERSONA,
     ...(isGroup ? [GROUP_CHAT_RULES] : [
+      formatConversationContextForPrompt(context.conversation ?? null),
+      CONVERSATION_TOPIC_RULES,
       BRAIN_V1_RULES,
       MEMORY_V2_RULES,
       "You are an intelligent task management AI.",
@@ -288,6 +305,19 @@ export async function generateChatReply(
             }
           },
           required: ["keywords"]
+        }
+      },
+      {
+        type: "function",
+        name: "set_conversation_topic",
+        description: "Updates the tracked conversation topic when Aldo clearly switched subject (e.g. from drone project to shopping). Do NOT call for deadline/time-only replies on the same task, short yes/no confirmations, or minor clarifications within the same topic.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            topic: { type: "STRING", description: "Short label for the new topic (e.g. 'belanja kaos', 'drone project')." },
+            reason: { type: "STRING", description: "Optional brief reason why the topic changed." }
+          },
+          required: ["topic"]
         }
       }
     ];

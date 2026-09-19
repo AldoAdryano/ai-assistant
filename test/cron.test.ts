@@ -27,6 +27,7 @@ describe("Scheduled Alarm Reader (Task 53.1)", () => {
     getActiveRoutines: vi.fn(),
     listMemoryContext: vi.fn(),
     generateProactiveAlarm: vi.fn(),
+    generateTaskBriefing: vi.fn(),
     generateRoutineAlarm: vi.fn(),
   };
 
@@ -36,6 +37,7 @@ describe("Scheduled Alarm Reader (Task 53.1)", () => {
     mockDeps.listMemoryContext.mockResolvedValue([]);
     mockDeps.getActiveRoutines.mockResolvedValue([]);
     mockDeps.generateProactiveAlarm.mockResolvedValue("Alarm!");
+    mockDeps.generateTaskBriefing.mockResolvedValue("Briefing!");
   });
 
   afterEach(() => {
@@ -51,9 +53,10 @@ describe("Scheduled Alarm Reader (Task 53.1)", () => {
 
     await runScheduled({} as any, env, {} as any, mockDeps as any);
     expect(mockDeps.generateProactiveAlarm).not.toHaveBeenCalled();
+    expect(mockDeps.generateTaskBriefing).not.toHaveBeenCalled();
   });
 
-  it("date-only at 07:00 WIB → remind", async () => {
+  it("date-only at 07:00 WIB → briefing", async () => {
     // 07:00 WIB = 00:00 UTC
     vi.setSystemTime(new Date("2026-09-02T00:00:00Z"));
     mockDeps.getUpcomingTasks.mockResolvedValue([
@@ -61,10 +64,17 @@ describe("Scheduled Alarm Reader (Task 53.1)", () => {
     ]);
 
     await runScheduled({} as any, env, {} as any, mockDeps as any);
-    expect(mockDeps.generateProactiveAlarm).toHaveBeenCalledTimes(1);
+    expect(mockDeps.generateTaskBriefing).toHaveBeenCalledTimes(1);
+    expect(mockDeps.generateTaskBriefing).toHaveBeenCalledWith(
+      expect.anything(),
+      [expect.objectContaining({ id: "1", due: "2026-09-02" })],
+      { tasks: expect.any(Array), memories: expect.any(Array) },
+      { source: "cron" }
+    );
+    expect(mockDeps.generateProactiveAlarm).not.toHaveBeenCalled();
   });
 
-  it("date-only at 18:00 WIB → remind", async () => {
+  it("date-only at 18:00 WIB → briefing", async () => {
     // 18:00 WIB = 11:00 UTC
     vi.setSystemTime(new Date("2026-09-02T11:00:00Z"));
     mockDeps.getUpcomingTasks.mockResolvedValue([
@@ -72,7 +82,14 @@ describe("Scheduled Alarm Reader (Task 53.1)", () => {
     ]);
 
     await runScheduled({} as any, env, {} as any, mockDeps as any);
-    expect(mockDeps.generateProactiveAlarm).toHaveBeenCalledTimes(1);
+    expect(mockDeps.generateTaskBriefing).toHaveBeenCalledTimes(1);
+    expect(mockDeps.generateTaskBriefing).toHaveBeenCalledWith(
+      expect.anything(),
+      [expect.objectContaining({ id: "1", due: "2026-09-02" })],
+      { tasks: expect.any(Array), memories: expect.any(Array) },
+      { source: "cron" }
+    );
+    expect(mockDeps.generateProactiveAlarm).not.toHaveBeenCalled();
   });
 
   it("date-only at 12:00 WIB → TIDAK remind (slot siang dihapus)", async () => {
@@ -84,6 +101,7 @@ describe("Scheduled Alarm Reader (Task 53.1)", () => {
 
     await runScheduled({} as any, env, {} as any, mockDeps as any);
     expect(mockDeps.generateProactiveAlarm).not.toHaveBeenCalled();
+    expect(mockDeps.generateTaskBriefing).not.toHaveBeenCalled();
   });
 
   it("Condition B: datetime 60 menit ke depan → MASUK tasksToRemind", async () => {
@@ -99,6 +117,7 @@ describe("Scheduled Alarm Reader (Task 53.1)", () => {
     expect(mockDeps.generateProactiveAlarm).toHaveBeenCalledWith(expect.anything(), [
       expect.objectContaining({ due: "2026-09-02T11:00:00Z" })
     ], { tasks: expect.any(Array), memories: expect.any(Array) });
+    expect(mockDeps.generateTaskBriefing).not.toHaveBeenCalled();
   });
 
   it("urgent datetime: cron tiap 10 menit boleh kirim ulang dalam jendela 60 menit", async () => {
@@ -119,6 +138,7 @@ describe("Scheduled Alarm Reader (Task 53.1)", () => {
     await runScheduled({} as any, env, {} as any, mockDeps as any);
 
     expect(mockDeps.generateProactiveAlarm).toHaveBeenCalledTimes(2);
+    expect(mockDeps.generateTaskBriefing).not.toHaveBeenCalled();
   });
 
   it("Condition B: datetime 90 menit ke depan di jam non-slot → TIDAK masuk", async () => {
@@ -131,17 +151,19 @@ describe("Scheduled Alarm Reader (Task 53.1)", () => {
 
     await runScheduled({} as any, env, {} as any, mockDeps as any);
     expect(mockDeps.generateProactiveAlarm).not.toHaveBeenCalled();
+    expect(mockDeps.generateTaskBriefing).not.toHaveBeenCalled();
   });
 
-  it("datetime > 60 menit di 07:00 WIB → remind rutin", async () => {
-    // 07:00 WIB = 00:00 UTC; due 5 jam lagi
+  it("datetime > 60 menit di 07:00 WIB → briefing", async () => {
+    // 07:00 WIB = 00:00 UTC; due 5 jam lagi (masih hari ini)
     vi.setSystemTime(new Date("2026-09-02T00:00:00Z"));
     mockDeps.getUpcomingTasks.mockResolvedValue([
       { id: "1", task: "Tugas sore", status: "To Do", priority: "High", due: "2026-09-02T05:00:00Z" }
     ]);
 
     await runScheduled({} as any, env, {} as any, mockDeps as any);
-    expect(mockDeps.generateProactiveAlarm).toHaveBeenCalledTimes(1);
+    expect(mockDeps.generateTaskBriefing).toHaveBeenCalledTimes(1);
+    expect(mockDeps.generateProactiveAlarm).not.toHaveBeenCalled();
   });
 
   it("datetime ≤ 60 menit di jam non-slot → tetap remind urgent", async () => {
@@ -153,5 +175,72 @@ describe("Scheduled Alarm Reader (Task 53.1)", () => {
 
     await runScheduled({} as any, env, {} as any, mockDeps as any);
     expect(mockDeps.generateProactiveAlarm).toHaveBeenCalledTimes(1);
+    expect(mockDeps.generateTaskBriefing).not.toHaveBeenCalled();
+  });
+
+  it("07:00 with overdue + urgent mepet → one combined alarm", async () => {
+    const put = vi.fn(async () => undefined);
+    env.DEDUP_KV = {
+      get: vi.fn(async () => null),
+      put,
+      delete: vi.fn(async () => undefined),
+      list: vi.fn(),
+    } as any;
+
+    // 07:00 WIB = 00:00 UTC
+    vi.setSystemTime(new Date("2026-09-02T00:00:00Z"));
+    mockDeps.getUpcomingTasks.mockResolvedValue([
+      { id: "overdue", task: "Lewat deadline", status: "To Do", priority: "High", due: "2026-09-01" },
+      { id: "urgent", task: "Mepet 45m", status: "To Do", priority: "High", due: "2026-09-02T00:45:00Z" },
+    ]);
+
+    await runScheduled({} as any, env, {} as any, mockDeps as any);
+
+    expect(mockDeps.generateProactiveAlarm).toHaveBeenCalledTimes(1);
+    expect(mockDeps.generateProactiveAlarm).toHaveBeenCalledWith(
+      expect.anything(),
+      [expect.objectContaining({ id: "urgent" })],
+      { tasks: expect.any(Array), memories: expect.any(Array) }
+    );
+    expect(mockDeps.generateTaskBriefing).toHaveBeenCalledTimes(1);
+    expect(mockDeps.generateTaskBriefing).toHaveBeenCalledWith(
+      expect.anything(),
+      [expect.objectContaining({ id: "overdue" })],
+      { tasks: expect.any(Array), memories: expect.any(Array) },
+      { source: "cron" }
+    );
+    expect(put).toHaveBeenCalledTimes(1);
+    expect(put).toHaveBeenCalledWith(
+      "pending_alarms",
+      JSON.stringify(["Alarm!\n\nBriefing!"])
+    );
+  });
+
+  it("07:00 with only far future Medium task → neither generator", async () => {
+    vi.setSystemTime(new Date("2026-09-02T00:00:00Z"));
+    mockDeps.getUpcomingTasks.mockResolvedValue([
+      { id: "far", task: "Nanti banget", status: "To Do", priority: "Medium", due: "2026-09-20" }
+    ]);
+
+    await runScheduled({} as any, env, {} as any, mockDeps as any);
+    expect(mockDeps.generateProactiveAlarm).not.toHaveBeenCalled();
+    expect(mockDeps.generateTaskBriefing).not.toHaveBeenCalled();
+  });
+
+  it("07:00 with High no-due → briefing", async () => {
+    vi.setSystemTime(new Date("2026-09-02T00:00:00Z"));
+    mockDeps.getUpcomingTasks.mockResolvedValue([
+      { id: "high", task: "Penting tanpa due", status: "To Do", priority: "High", due: null }
+    ]);
+
+    await runScheduled({} as any, env, {} as any, mockDeps as any);
+    expect(mockDeps.generateTaskBriefing).toHaveBeenCalledTimes(1);
+    expect(mockDeps.generateTaskBriefing).toHaveBeenCalledWith(
+      expect.anything(),
+      [expect.objectContaining({ id: "high" })],
+      { tasks: expect.any(Array), memories: expect.any(Array) },
+      { source: "cron" }
+    );
+    expect(mockDeps.generateProactiveAlarm).not.toHaveBeenCalled();
   });
 });

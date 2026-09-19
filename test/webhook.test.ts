@@ -38,6 +38,7 @@ function deps(): WorkerDeps {
     getActiveRoutines: vi.fn(async () => []),
     listMemoryContext: vi.fn(async () => []),
     generateProactiveAlarm: vi.fn(async () => 'alarm'),
+    generateTaskBriefing: vi.fn(async () => 'briefing'),
     generateRoutineAlarm: vi.fn(async () => 'routine')
   };
 }

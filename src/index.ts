@@ -1,9 +1,10 @@
 import { getConfig, isAllowedWhatsappSender } from "./config";
 import { handleUserMessage } from "./router";
-import type { AppConfig, Env, IncomingTelegramMessage, TaskRecord } from "./types";
+import type { AppConfig, Env, IncomingTelegramMessage } from "./types";
 import { extractTelegramMessage, isTelegramWebhookSecretValid, sendTelegramText, downloadTelegramPhoto } from "./telegram";
 import { getUpcomingTasks, getActiveRoutines, listMemoryContext } from "./notion";
-import { generateChatReply, generateProactiveAlarm, generateRoutineAlarm } from "./gemini";
+import { generateChatReply, generateProactiveAlarm, generateRoutineAlarm, generateTaskBriefing } from "./gemini";
+import { isDailyReminderSlot, selectBriefingTasks, selectUrgentTasks, mergeAlarmTaskLists } from "./task-intelligence";
 
 async function queueAlarm(env: Env, msg: string) {
   try {
@@ -16,11 +17,6 @@ async function queueAlarm(env: Env, msg: string) {
   }
 }
 
-/** Daily routine reminder slots: 07:00 and 18:00 WIB (first 10-min cron tick of that hour). */
-function isDailyReminderSlot(hour: number, minute: number): boolean {
-  return (hour === 7 || hour === 18) && minute < 10;
-}
-
 const DEDUP_TTL_SECONDS = 86400;
 
 export interface WorkerDeps {
@@ -31,10 +27,21 @@ export interface WorkerDeps {
   getActiveRoutines: typeof getActiveRoutines;
   listMemoryContext: typeof listMemoryContext;
   generateProactiveAlarm: typeof generateProactiveAlarm;
+  generateTaskBriefing: typeof generateTaskBriefing;
   generateRoutineAlarm: typeof generateRoutineAlarm;
 }
 
-const defaultDeps: WorkerDeps = { handleUserMessage, sendTelegramText, downloadTelegramPhoto, getUpcomingTasks, getActiveRoutines, listMemoryContext, generateProactiveAlarm, generateRoutineAlarm };
+const defaultDeps: WorkerDeps = {
+  handleUserMessage,
+  sendTelegramText,
+  downloadTelegramPhoto,
+  getUpcomingTasks,
+  getActiveRoutines,
+  listMemoryContext,
+  generateProactiveAlarm,
+  generateTaskBriefing,
+  generateRoutineAlarm,
+};
 
 async function processMessage(env: Env, config: AppConfig, message: IncomingTelegramMessage, deps: WorkerDeps): Promise<void> {
   if (message.kind === "unsupported") {
@@ -63,45 +70,27 @@ export async function runScheduled(event: ScheduledController, env: Env, ctx: Ex
   try {
     const tasks = await deps.getUpcomingTasks(config);
     const memories = await deps.listMemoryContext(config);
-    const tasksToRemind: TaskRecord[] = [];
     const nowMs = Date.now();
     // Konversi waktu sekarang ke UTC+7 (WIB)
     const nowWib = new Date(nowMs + 7 * 60 * 60 * 1000);
     const currentHour = nowWib.getUTCHours();
     const currentMinute = nowWib.getUTCMinutes();
-    
-    for (const t of tasks) {
-      if (!t.due) continue;
+    const dailySlot = isDailyReminderSlot(currentHour, currentMinute);
 
-      if (!t.due.includes("T")) {
-        // Date-only: only morning 07 and evening 18 WIB
-        if (isDailyReminderSlot(currentHour, currentMinute)) {
-          const dueMs = new Date(t.due + "T00:00:00Z").getTime();
-          const diffDays = (dueMs - nowMs) / (1000 * 60 * 60 * 24);
-          if (diffDays <= 2) {
-            tasksToRemind.push(t);
-          }
-        }
-      } else {
-        // DateTime: every 10 min when within 60 minutes of due; otherwise daily 07/18
-        const dueMs = new Date(t.due).getTime();
-        const diffMs = dueMs - nowMs;
-        const diffMinutes = diffMs / (1000 * 60);
+    const urgent = selectUrgentTasks(tasks, nowMs);
+    const briefing = dailySlot ? selectBriefingTasks(tasks, nowMs) : [];
 
-        if (diffMinutes > 0 && diffMinutes <= 60) {
-          tasksToRemind.push(t);
-        } else if (isDailyReminderSlot(currentHour, currentMinute) && diffMinutes > 60) {
-          const diffDays = diffMs / (1000 * 60 * 60 * 24);
-          if (diffDays <= 2) {
-            tasksToRemind.push(t);
-          }
-        }
-      }
-    }
-
-    if (tasksToRemind.length > 0) {
-      const alarmMessage = await deps.generateProactiveAlarm(config, tasksToRemind, { tasks, memories });
-      await queueAlarm(env, alarmMessage);
+    if (urgent.length > 0 && briefing.length > 0) {
+      const remainder = mergeAlarmTaskLists(urgent, briefing).slice(urgent.length);
+      const urgentMsg = await deps.generateProactiveAlarm(config, urgent, { tasks, memories });
+      const briefMsg = remainder.length
+        ? await deps.generateTaskBriefing(config, remainder, { tasks, memories }, { source: "cron" })
+        : "";
+      await queueAlarm(env, briefMsg ? `${urgentMsg}\n\n${briefMsg}` : urgentMsg);
+    } else if (urgent.length > 0) {
+      await queueAlarm(env, await deps.generateProactiveAlarm(config, urgent, { tasks, memories }));
+    } else if (briefing.length > 0) {
+      await queueAlarm(env, await deps.generateTaskBriefing(config, briefing, { tasks, memories }, { source: "cron" }));
     }
 
     const routines = await deps.getActiveRoutines(config);

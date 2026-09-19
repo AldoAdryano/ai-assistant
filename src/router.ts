@@ -1,6 +1,6 @@
 import { generateChatReply, generateTaskBriefing, GeminiApiError } from "./gemini";
 import type { ChatReply } from "./gemini";
-import { NotionRejectionError, NotionUnknownError, createNote, createTask, listActiveTasks, listProjects, getAllTasks, getAllNotes, listMemoryContext, recallMemory, upsertMemory, getAllMemory, updateTask, archiveTask, archiveProject, addRoutine } from "./notion";
+import { NotionRejectionError, NotionUnknownError, createNote, createTask, listActiveTasks, listProjects, getAllTasks, getAllNotes, listMemoryContext, recallMemory, upsertMemory, getAllMemory, updateTask, archiveTask, archiveProject, createProject, updateProject, addRoutine } from "./notion";
 import { detectBriefingRequest, selectBriefingTasks, emptyBriefingReply } from "./task-intelligence";
 import {
   getInteractionId,
@@ -33,7 +33,7 @@ import {
 import type { PendingDelete, PendingMemory } from "./action-safety";
 import { applyTopicSwitch, detectExplicitTopicSwitch, type ConversationContext } from "./conversation-context";
 import { parseIndonesianDeadline, parseIndonesianNaturalDate } from "./date";
-import { extractProjectMention, matchProject } from "./project-match";
+import { extractProjectMention, findExactProject, matchProject } from "./project-match";
 import type { AppConfig, Env, ProjectRecord } from "./types";
 
 export function sanitizeMarkdown(text: string): string {
@@ -42,7 +42,7 @@ export function sanitizeMarkdown(text: string): string {
 
 export interface RouterDeps {
   createNote: typeof createNote; createTask: typeof createTask; listActiveTasks: typeof listActiveTasks; listProjects: typeof listProjects; getAllTasks: typeof getAllTasks; getAllNotes: typeof getAllNotes;
-  upsertMemory: typeof upsertMemory; recallMemory: typeof recallMemory; listMemoryContext: typeof listMemoryContext; getAllMemory: typeof getAllMemory; updateTask: typeof updateTask; archiveTask: typeof archiveTask; archiveProject: typeof archiveProject; addRoutine: typeof addRoutine;
+  upsertMemory: typeof upsertMemory; recallMemory: typeof recallMemory; listMemoryContext: typeof listMemoryContext; getAllMemory: typeof getAllMemory; updateTask: typeof updateTask; archiveTask: typeof archiveTask; archiveProject: typeof archiveProject; createProject: typeof createProject; updateProject: typeof updateProject; addRoutine: typeof addRoutine;
   generateChatReply: typeof generateChatReply;
   parseIndonesianDeadline: typeof parseIndonesianDeadline;
   parseIndonesianNaturalDate: typeof parseIndonesianNaturalDate;
@@ -56,7 +56,7 @@ export interface RouterDeps {
   generateTaskBriefing: typeof generateTaskBriefing;
 }
 const defaultDeps: RouterDeps = {
-  createNote, createTask, listActiveTasks, listProjects, getAllTasks, getAllNotes, upsertMemory, recallMemory, listMemoryContext, getAllMemory, updateTask, archiveTask, archiveProject, addRoutine,
+  createNote, createTask, listActiveTasks, listProjects, getAllTasks, getAllNotes, upsertMemory, recallMemory, listMemoryContext, getAllMemory, updateTask, archiveTask, archiveProject, createProject, updateProject, addRoutine,
   generateChatReply, parseIndonesianDeadline, parseIndonesianNaturalDate, getInteractionId, saveInteractionId, getChatLog, saveChatLog, clearMemory,
   getPendingDelete, savePendingDelete, clearPendingDelete, getPendingMemory, savePendingMemory, clearPendingMemory,
   getConversationContext, saveConversationContext, clearConversationContext,
@@ -235,6 +235,7 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
               tasks,
               memories,
               ...(projectsEnabled && !isGroup ? { projects } : {}),
+              projectsEnabled: projectsEnabled && !isGroup,
               chatContext: isGroup ? "group" : "dm",
               conversation: isGroup ? null : conversationContext,
             },
@@ -382,7 +383,7 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
                   } else if (matched.kind === "none") {
                     const names = knownProjects.slice(0, 5).map((p) => p.name).join(", ");
                     replyMessages.push(
-                      `Project tidak cocok. Project yang ada: ${names}. Sebut project yang mana, atau bilang tanpa project.`,
+                      `Project tidak cocok. Project yang ada: ${names}. Sebut project yang mana, atau bilang tanpa project.\nMau kubuatkan project itu dulu? Bilang "buat project …".`,
                     );
                     continue;
                   } else {
@@ -445,6 +446,108 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
               case "create_routine": {
                 await deps.addRoutine(config, call.args.name, call.args.time);
                 replyMessages.push(`Rutinitas berhasil ditambahkan.`);
+                break;
+              }
+              case "create_notion_project": {
+                if (!projectsEnabled) {
+                  replyMessages.push("Projects belum dikonfigurasi.");
+                  break;
+                }
+                const name = typeof call.args.name === "string" ? call.args.name.trim() : "";
+                if (!name) {
+                  replyMessages.push("Nama project belum diisi.");
+                  break;
+                }
+                const knownProjects = await ensureProjects();
+                if (findExactProject(name, knownProjects)) {
+                  replyMessages.push(
+                    `Project '${name}' sudah ada. Pakai itu atau pilih nama lain.`,
+                  );
+                  break;
+                }
+                const area = typeof call.args.area === "string" ? call.args.area.trim() : "";
+                let deadline = typeof call.args.deadline === "string" ? call.args.deadline.trim() : "";
+                if (deadline) {
+                  const naturalParsed = deps.parseIndonesianNaturalDate(deadline, new Date());
+                  if (naturalParsed) deadline = naturalParsed;
+                }
+                await deps.createProject(config, {
+                  name,
+                  ...(area ? { area } : {}),
+                  ...(deadline ? { deadline } : {}),
+                });
+                replyMessages.push(`Project '${name}' sudah dibuat.`);
+                break;
+              }
+              case "update_notion_project": {
+                if (!projectsEnabled) {
+                  replyMessages.push("Projects belum dikonfigurasi.");
+                  break;
+                }
+                const query = typeof call.args.project === "string" ? call.args.project.trim() : "";
+                const knownProjects = await ensureProjects();
+                const matched = matchProject(query, knownProjects);
+                if (matched.kind === "none") {
+                  const names = knownProjects.slice(0, 5).map((p) => p.name).join(", ");
+                  replyMessages.push(
+                    `Project tidak cocok. Project yang ada: ${names}. Sebut project yang mana.`,
+                  );
+                  break;
+                }
+                if (matched.kind === "ambiguous") {
+                  const names = matched.candidates.map((p) => p.name).join(", ");
+                  replyMessages.push(
+                    `Beberapa project cocok (${names}). Sebut project yang mana.`,
+                  );
+                  break;
+                }
+                const newName = typeof call.args.new_name === "string" ? call.args.new_name.trim() : "";
+                const area = typeof call.args.area === "string" ? call.args.area.trim() : "";
+                let deadline = typeof call.args.deadline === "string" ? call.args.deadline.trim() : "";
+                if (deadline) {
+                  const naturalParsed = deps.parseIndonesianNaturalDate(deadline, new Date());
+                  if (naturalParsed) deadline = naturalParsed;
+                }
+                const update: { name?: string; area?: string; deadline?: string } = {};
+                if (newName) update.name = newName;
+                if (area) update.area = area;
+                if (deadline) update.deadline = deadline;
+                await deps.updateProject(config, matched.project.id, update);
+                replyMessages.push(`Project '${matched.project.name}' berhasil diperbarui.`);
+                break;
+              }
+              case "delete_notion_project": {
+                if (!projectsEnabled) {
+                  replyMessages.push("Projects belum dikonfigurasi.");
+                  break;
+                }
+                const query = typeof call.args.project === "string" ? call.args.project.trim() : "";
+                const knownProjects = await ensureProjects();
+                const matched = matchProject(query, knownProjects);
+                if (matched.kind === "none") {
+                  const names = knownProjects.slice(0, 5).map((p) => p.name).join(", ");
+                  replyMessages.push(
+                    `Project tidak cocok. Project yang ada: ${names}. Sebut project yang mana.`,
+                  );
+                  break;
+                }
+                if (matched.kind === "ambiguous") {
+                  const names = matched.candidates.map((p) => p.name).join(", ");
+                  replyMessages.push(
+                    `Beberapa project cocok (${names}). Sebut project yang mana.`,
+                  );
+                  break;
+                }
+                await deps.savePendingDelete(env, userId, {
+                  kind: "project",
+                  ids: [matched.project.id],
+                  summary: matched.project.name,
+                  createdAt: Date.now(),
+                });
+                pendingDeleteSavedThisTurn = true;
+                replyMessages.push(
+                  `Aldo, yakin hapus project ${matched.project.name}? Task di dalamnya tidak ikut terhapus. Balas "ya" atau "jangan".`,
+                );
                 break;
               }
               case "update_notion_task": {

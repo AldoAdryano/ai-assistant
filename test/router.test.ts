@@ -23,6 +23,8 @@ function deps(overrides: Partial<RouterDeps> = {}): RouterDeps {
     updateTask: vi.fn(async () => undefined),
     archiveTask: vi.fn(async () => undefined),
     archiveProject: vi.fn(async () => undefined),
+    createProject: vi.fn(async () => "proj-new"),
+    updateProject: vi.fn(async () => undefined),
     addRoutine: vi.fn(async () => 'routine-id'),
     generateChatReply: vi.fn(async () => ({ type: "text", text: "Jawaban AI" }) as any),
     parseIndonesianDeadline: vi.fn(() => ({ kind: "none" })) as any,
@@ -968,12 +970,244 @@ describe("handleUserMessage (AI-Driven)", () => {
         listProjects: vi.fn(async () => sampleProjects),
         generateChatReply: vi.fn(async (_c, _m, ctx) => {
           expect(ctx.projects).toEqual(sampleProjects);
+          expect(ctx.projectsEnabled).toBe(true);
           return { type: "text", text: "Hai" };
         }) as any,
       });
       await handleUserMessage(env, 123, projectsConfig, { text: "Halo" }, d);
       expect(d.listProjects).toHaveBeenCalledWith(projectsConfig);
       expect(d.generateChatReply).toHaveBeenCalled();
+    });
+
+    it("create_notion_task unknown project includes hint to buat project", async () => {
+      const d = deps({
+        listProjects: vi.fn(async () => sampleProjects),
+        generateChatReply: vi.fn()
+          .mockResolvedValueOnce({
+            type: "function_calls",
+            calls: [{
+              name: "create_notion_task",
+              args: { title: "Laundry", priority: "Medium", project: "Finance" },
+            }],
+          })
+          .mockResolvedValue({ type: "text", text: "ok" }) as any,
+      });
+      const reply = await handleUserMessage(env, 123, projectsConfig, { text: "tugas finance" }, d);
+      expect(d.createTask).not.toHaveBeenCalled();
+      expect(reply).toMatch(/Mau kubuatkan project itu dulu\? Bilang "buat project/i);
+    });
+  });
+
+  describe("Projects CRUD", () => {
+    const projectsConfig = {
+      notionProjectsDataSourceId: "projects-ds",
+    } as AppConfig;
+
+    const sampleProjects = [
+      { id: "proj-ikn", name: "Persiapan IKN" },
+      { id: "proj-port", name: "Portfolio" },
+    ];
+
+    it("create_notion_project creates when name is unique", async () => {
+      const d = deps({
+        listProjects: vi.fn(async () => sampleProjects),
+        createProject: vi.fn(async () => "proj-new"),
+        generateChatReply: vi.fn()
+          .mockResolvedValueOnce({
+            type: "function_calls",
+            calls: [{
+              name: "create_notion_project",
+              args: { name: "Liburan Mars", area: "Belajar", deadline: "2026-12-01" },
+            }],
+          })
+          .mockResolvedValue({ type: "text", text: "ok" }) as any,
+      });
+      const reply = await handleUserMessage(
+        env,
+        123,
+        projectsConfig,
+        { text: "buat project Liburan Mars" },
+        d,
+      );
+      expect(d.createProject).toHaveBeenCalledWith(projectsConfig, {
+        name: "Liburan Mars",
+        area: "Belajar",
+        deadline: "2026-12-01",
+      });
+      expect(reply).toMatch(/Liburan Mars/i);
+      expect(reply).toMatch(/sudah|berhasil|dibuat/i);
+    });
+
+    it("create_notion_project rejects exact duplicate name", async () => {
+      const d = deps({
+        listProjects: vi.fn(async () => sampleProjects),
+        createProject: vi.fn(async () => "proj-new"),
+        generateChatReply: vi.fn()
+          .mockResolvedValueOnce({
+            type: "function_calls",
+            calls: [{
+              name: "create_notion_project",
+              args: { name: "portfolio" },
+            }],
+          })
+          .mockResolvedValue({ type: "text", text: "ok" }) as any,
+      });
+      const reply = await handleUserMessage(
+        env,
+        123,
+        projectsConfig,
+        { text: "buat project portfolio" },
+        d,
+      );
+      expect(d.createProject).not.toHaveBeenCalled();
+      expect(reply).toMatch(/sudah ada/i);
+      expect(reply).toMatch(/Portfolio/i);
+    });
+
+    it("create_notion_project soft-disables when projects not configured", async () => {
+      const disabledConfig = { notionProjectsDataSourceId: null } as AppConfig;
+      const d = deps({
+        createProject: vi.fn(async () => "proj-new"),
+        generateChatReply: vi.fn()
+          .mockResolvedValueOnce({
+            type: "function_calls",
+            calls: [{
+              name: "create_notion_project",
+              args: { name: "Liburan Mars" },
+            }],
+          })
+          .mockResolvedValue({ type: "text", text: "ok" }) as any,
+      });
+      const reply = await handleUserMessage(
+        env,
+        123,
+        disabledConfig,
+        { text: "buat project Liburan Mars" },
+        d,
+      );
+      expect(d.createProject).not.toHaveBeenCalled();
+      expect(d.listProjects).not.toHaveBeenCalled();
+      expect(reply).toContain("Projects belum dikonfigurasi.");
+    });
+
+    it("passes projectsEnabled false when projects data source unset", async () => {
+      const disabledConfig = { notionProjectsDataSourceId: null } as AppConfig;
+      const d = deps({
+        generateChatReply: vi.fn(async (_c, _m, ctx) => {
+          expect(ctx.projectsEnabled).toBe(false);
+          return { type: "text", text: "Hai" };
+        }) as any,
+      });
+      await handleUserMessage(env, 123, disabledConfig, { text: "Halo" }, d);
+      expect(d.generateChatReply).toHaveBeenCalled();
+    });
+
+    it("update_notion_project patches matched project", async () => {
+      const d = deps({
+        listProjects: vi.fn(async () => sampleProjects),
+        updateProject: vi.fn(async () => undefined),
+        generateChatReply: vi.fn()
+          .mockResolvedValueOnce({
+            type: "function_calls",
+            calls: [{
+              name: "update_notion_project",
+              args: {
+                project: "Persiapan IKN",
+                new_name: "Persiapan IKN 2026",
+                area: "Kerja",
+                deadline: "2026-11-01",
+              },
+            }],
+          })
+          .mockResolvedValue({ type: "text", text: "ok" }) as any,
+      });
+      const reply = await handleUserMessage(
+        env,
+        123,
+        projectsConfig,
+        { text: "ubah nama project Persiapan IKN" },
+        d,
+      );
+      expect(d.updateProject).toHaveBeenCalledWith(projectsConfig, "proj-ikn", {
+        name: "Persiapan IKN 2026",
+        area: "Kerja",
+        deadline: "2026-11-01",
+      });
+      expect(reply).toMatch(/berhasil|diperbarui|diubah/i);
+    });
+
+    it("update_notion_project clarifies when project unknown", async () => {
+      const d = deps({
+        listProjects: vi.fn(async () => sampleProjects),
+        updateProject: vi.fn(async () => undefined),
+        generateChatReply: vi.fn()
+          .mockResolvedValueOnce({
+            type: "function_calls",
+            calls: [{
+              name: "update_notion_project",
+              args: { project: "Finance", new_name: "Finance 2" },
+            }],
+          })
+          .mockResolvedValue({ type: "text", text: "ok" }) as any,
+      });
+      const reply = await handleUserMessage(
+        env,
+        123,
+        projectsConfig,
+        { text: "ubah project Finance" },
+        d,
+      );
+      expect(d.updateProject).not.toHaveBeenCalled();
+      expect(reply).toMatch(/tidak cocok|tidak ketemu|tidak ada/i);
+    });
+
+    it("delete_notion_project saves pending delete and asks confirm", async () => {
+      const d = deps({
+        listProjects: vi.fn(async () => sampleProjects),
+        generateChatReply: vi.fn()
+          .mockResolvedValueOnce({
+            type: "function_calls",
+            calls: [{
+              name: "delete_notion_project",
+              args: { project: "Portfolio" },
+            }],
+          })
+          .mockResolvedValue({ type: "text", text: "ok" }) as any,
+      });
+      const reply = await handleUserMessage(
+        env,
+        123,
+        projectsConfig,
+        { text: "hapus project Portfolio" },
+        d,
+      );
+      expect(d.archiveProject).not.toHaveBeenCalled();
+      expect(d.savePendingDelete).toHaveBeenCalledWith(
+        env,
+        123,
+        expect.objectContaining({
+          kind: "project",
+          ids: ["proj-port"],
+          summary: "Portfolio",
+        }),
+      );
+      expect(reply).toContain('Aldo, yakin hapus project Portfolio? Task di dalamnya tidak ikut terhapus. Balas "ya" atau "jangan".');
+    });
+
+    it("confirm ya after delete_notion_project archives via archiveProject", async () => {
+      const d = deps({
+        listProjects: vi.fn(async () => sampleProjects),
+        getPendingDelete: vi.fn(async () => ({
+          kind: "project" as const,
+          ids: ["proj-port"],
+          summary: "Portfolio",
+          createdAt: Date.now(),
+        })),
+      });
+      const reply = await handleUserMessage(env, 123, projectsConfig, { text: "ya" }, d);
+      expect(d.archiveProject).toHaveBeenCalledWith(projectsConfig, "proj-port");
+      expect(d.archiveTask).not.toHaveBeenCalled();
+      expect(reply).toMatch(/berhasil menghapus 1 project/i);
     });
   });
 });

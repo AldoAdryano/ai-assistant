@@ -1,6 +1,6 @@
 import { generateChatReply, generateTaskBriefing, GeminiApiError } from "./gemini";
 import type { ChatReply } from "./gemini";
-import { NotionRejectionError, NotionUnknownError, createNote, createTask, listActiveTasks, listProjects, getAllTasks, getAllNotes, listMemoryContext, recallMemory, upsertMemory, getAllMemory, updateTask, archiveTask, addRoutine } from "./notion";
+import { NotionRejectionError, NotionUnknownError, createNote, createTask, listActiveTasks, listProjects, getAllTasks, getAllNotes, listMemoryContext, recallMemory, upsertMemory, getAllMemory, updateTask, archiveTask, archiveProject, addRoutine } from "./notion";
 import { detectBriefingRequest, selectBriefingTasks, emptyBriefingReply } from "./task-intelligence";
 import {
   getInteractionId,
@@ -42,7 +42,7 @@ export function sanitizeMarkdown(text: string): string {
 
 export interface RouterDeps {
   createNote: typeof createNote; createTask: typeof createTask; listActiveTasks: typeof listActiveTasks; listProjects: typeof listProjects; getAllTasks: typeof getAllTasks; getAllNotes: typeof getAllNotes;
-  upsertMemory: typeof upsertMemory; recallMemory: typeof recallMemory; listMemoryContext: typeof listMemoryContext; getAllMemory: typeof getAllMemory; updateTask: typeof updateTask; archiveTask: typeof archiveTask; addRoutine: typeof addRoutine;
+  upsertMemory: typeof upsertMemory; recallMemory: typeof recallMemory; listMemoryContext: typeof listMemoryContext; getAllMemory: typeof getAllMemory; updateTask: typeof updateTask; archiveTask: typeof archiveTask; archiveProject: typeof archiveProject; addRoutine: typeof addRoutine;
   generateChatReply: typeof generateChatReply;
   parseIndonesianDeadline: typeof parseIndonesianDeadline;
   parseIndonesianNaturalDate: typeof parseIndonesianNaturalDate;
@@ -56,7 +56,7 @@ export interface RouterDeps {
   generateTaskBriefing: typeof generateTaskBriefing;
 }
 const defaultDeps: RouterDeps = {
-  createNote, createTask, listActiveTasks, listProjects, getAllTasks, getAllNotes, upsertMemory, recallMemory, listMemoryContext, getAllMemory, updateTask, archiveTask, addRoutine,
+  createNote, createTask, listActiveTasks, listProjects, getAllTasks, getAllNotes, upsertMemory, recallMemory, listMemoryContext, getAllMemory, updateTask, archiveTask, archiveProject, addRoutine,
   generateChatReply, parseIndonesianDeadline, parseIndonesianNaturalDate, getInteractionId, saveInteractionId, getChatLog, saveChatLog, clearMemory,
   getPendingDelete, savePendingDelete, clearPendingDelete, getPendingMemory, savePendingMemory, clearPendingMemory,
   getConversationContext, saveConversationContext, clearConversationContext,
@@ -73,6 +73,7 @@ const DELETE_TOOL_NAMES = new Set([
 function deleteKindLabel(kind: PendingDelete["kind"]): string {
   if (kind === "notes") return "catatan";
   if (kind === "memory") return "memori";
+  if (kind === "project") return "project";
   return "tugas";
 }
 
@@ -104,7 +105,8 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
           let failCount = 0;
           for (const id of pending.ids) {
             try {
-              await deps.archiveTask(config, id);
+              if (pending.kind === "project") await deps.archiveProject(config, id);
+              else await deps.archiveTask(config, id);
               successCount++;
             } catch {
               failCount++;

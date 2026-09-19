@@ -22,6 +22,7 @@ function deps(overrides: Partial<RouterDeps> = {}): RouterDeps {
     getAllMemory: vi.fn(async (): Promise<MemoryRecord[]> => []),
     updateTask: vi.fn(async () => undefined),
     archiveTask: vi.fn(async () => undefined),
+    archiveProject: vi.fn(async () => undefined),
     addRoutine: vi.fn(async () => 'routine-id'),
     generateChatReply: vi.fn(async () => ({ type: "text", text: "Jawaban AI" }) as any),
     parseIndonesianDeadline: vi.fn(() => ({ kind: "none" })) as any,
@@ -254,6 +255,25 @@ describe("handleUserMessage (AI-Driven)", () => {
     expect(d.archiveTask).toHaveBeenCalledWith(config, "task-2");
     expect(d.clearPendingDelete).toHaveBeenCalledWith(env, 123);
     expect(reply).toMatch(/2|berhasil|hapus/i);
+  });
+
+  it("archives pending project delete via archiveProject on ya", async () => {
+    const d = deps({
+      getPendingDelete: vi.fn(async () => ({
+        kind: "project" as const,
+        ids: ["proj-1"],
+        summary: "Life OS",
+        createdAt: Date.now(),
+      })),
+    });
+    const reply = await handleUserMessage(env, 123, config, { text: "ya" }, d);
+    expect(d.generateChatReply).not.toHaveBeenCalled();
+    expect(d.createTask).not.toHaveBeenCalled();
+    expect(d.archiveTask).not.toHaveBeenCalled();
+    expect(d.archiveProject).toHaveBeenCalledTimes(1);
+    expect(d.archiveProject).toHaveBeenCalledWith(config, "proj-1");
+    expect(d.clearPendingDelete).toHaveBeenCalledWith(env, 123);
+    expect(reply).toMatch(/berhasil menghapus 1 project/i);
   });
 
   it("cancels pending delete when user says jangan", async () => {

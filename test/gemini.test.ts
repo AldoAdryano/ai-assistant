@@ -125,6 +125,46 @@ it("classifies media 'User location is not supported' as LOCATION_UNSUPPORTED", 
   spy.mockRestore();
 });
 
+it("includes Known LIFE OS projects and create_notion_task project arg when projects passed", async () => {
+  let requestBody: any;
+  const fakeFetch: typeof fetch = async (_input, init) => {
+    requestBody = JSON.parse(String(init?.body));
+    return interaction("Siap.");
+  };
+  await generateChatReply(config, { text: "Buat tugas laundry" }, {
+    tasks: [],
+    memories: [],
+    projects: [{ id: "proj-1", name: "Persiapan IKN" }],
+  }, undefined, fakeFetch);
+
+  const systemText = requestBody.systemInstruction.parts[0].text;
+  expect(systemText).toContain("Known LIFE OS projects");
+  expect(systemText).toContain("Persiapan IKN");
+  expect(systemText).toContain("id: proj-1");
+  expect(systemText).toMatch(/unsure|clarify|jangan.*create|do not call create/i);
+
+  const createTool = requestBody.tools[0].functionDeclarations.find(
+    (t: { name: string }) => t.name === "create_notion_task",
+  );
+  expect(createTool.parameters.properties.project).toEqual({
+    type: "STRING",
+    description: "Exact or clear LIFE OS project name from Known projects list. Omit if none / user said without project.",
+  });
+});
+
+it("omits Known LIFE OS projects block when no projects passed", async () => {
+  let requestBody: any;
+  const fakeFetch: typeof fetch = async (_input, init) => {
+    requestBody = JSON.parse(String(init?.body));
+    return interaction("Siap.");
+  };
+  await generateChatReply(config, { text: "Halo" }, {
+    tasks: [],
+    memories: [],
+  }, undefined, fakeFetch);
+  expect(requestBody.systemInstruction.parts[0].text).not.toContain("Known LIFE OS projects");
+});
+
 it("generateTaskBriefing returns empty copy without fetch", async () => {
   const fetchImpl = vi.fn();
   const text = await generateTaskBriefing(
@@ -158,6 +198,30 @@ it("generateTaskBriefing sends briefing prompt for cron", async () => {
   expect(sys.toLowerCase()).toMatch(/briefing/);
   expect(sys).toContain("Perpanjang XL");
   expect(sys).toMatch(/TIDAK mengirim|berinisiatif|Cron/i);
+});
+
+it("generateTaskBriefing labels tasks with projectName or Tanpa project", async () => {
+  let body: any;
+  const fetchImpl = async (_u: any, init: any) => {
+    body = JSON.parse(init.body);
+    return new Response(JSON.stringify({
+      candidates: [{ content: { parts: [{ text: "Briefing test" }] } }],
+    }), { status: 200 });
+  };
+  await generateTaskBriefing(
+    config,
+    [
+      { id: "1", task: "Laundry", status: "To Do", priority: "High", due: "2026-09-20", projectName: "Persiapan IKN" },
+      { id: "2", task: "Beli kopi", status: "To Do", priority: "Low" },
+    ],
+    { tasks: [], memories: [] },
+    { source: "on_demand" },
+    fetchImpl as any,
+  );
+  const sys = body.systemInstruction.parts[0].text;
+  expect(sys).toContain("[Persiapan IKN] Laundry (Jatuh tempo: 2026-09-20)");
+  expect(sys).toContain("[Tanpa project] Beli kopi");
+  expect(sys).toContain("Kelompokkan secara natural per project bila ada.");
 });
 
 it("logs sanitized diagnostic when Gemini API fails", async () => {

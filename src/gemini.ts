@@ -1,5 +1,5 @@
 import type { ConversationContext } from "./conversation-context";
-import type { AppConfig, MemoryCategory, MemoryRecord, TaskRecord, RoutineRecord } from "./types";
+import type { AppConfig, MemoryCategory, MemoryRecord, ProjectRecord, TaskRecord, RoutineRecord } from "./types";
 import { nowWib, getWibTimeLabel } from "./date";
 import { emptyBriefingReply } from "./task-intelligence";
 
@@ -113,10 +113,19 @@ const GROUP_CHAT_RULES = [
   "Balasan grup: singkat (1-4 kalimat). Jangan copy-paste ceramah panjang yang sama berulang-ulang.",
 ].join(" ");
 
+function formatProjectsForPrompt(projects: ProjectRecord[]): string {
+  const lines = projects.map((p) => `- ${p.name} (id: ${p.id})`);
+  return [
+    "Known LIFE OS projects (use these names only; do not invent):",
+    ...lines,
+    "PROJECT RULES: optional `project` on create_notion_task = best matching name from this list. If unsure which project → clarify in text, do not call create yet. Omit `project` if none / user said without project.",
+  ].join("\n");
+}
+
 export async function generateChatReply(
   config: AppConfig,
   userMessage: { text: string; imageBase64?: string; audioBase64?: string },
-  context: { tasks: TaskRecord[]; memories: MemoryRecord[]; chatContext?: "dm" | "group"; conversation?: ConversationContext | null },
+  context: { tasks: TaskRecord[]; memories: MemoryRecord[]; projects?: ProjectRecord[]; chatContext?: "dm" | "group"; conversation?: ConversationContext | null },
   previousInteractionId?: string | null,
   fetchImpl: typeof fetch = fetch,
 ): Promise<ChatReply> {
@@ -125,6 +134,9 @@ export async function generateChatReply(
     ? []
     : context.tasks.slice(0, 10).map((task) => `- [ID: ${task.id}] [${task.priority}] ${task.task}${task.due ? ` (due ${task.due})` : ""}`);
   const memoryBlock = isGroup ? "- none" : formatMemoriesForPrompt(context.memories);
+  const projectsBlock = !isGroup && context.projects?.length
+    ? formatProjectsForPrompt(context.projects)
+    : null;
   
   const now = nowWib();
   const localNow = new Date(now.getTime() + 7 * 3600000);
@@ -157,6 +169,7 @@ export async function generateChatReply(
       "AGENTIC BEHAVIOR (MULTI-STEP RESOLUTION):",
       "If the user asks to delete or update a specific task (e.g., \"hapus tugas baru\"), but you do NOT possess the exact Notion UUIDs in your immediate conversation history, YOU MUST NOT GUESS OR HALLUCINATE THEM.",
       "Instead, your FIRST action must be to call `read_notion_tasks` to search the database. Only after you have retrieved the correct UUIDs from the read action, you may proceed to use `delete_notion_tasks` or `update_notion_task`. If your environment does not support recursive tool calling, simply read the tasks for the user first and ask them to confirm which ones to delete.",
+      ...(projectsBlock ? [projectsBlock] : []),
       "\nActive tasks:\n" + (taskLines.length ? taskLines.join("\n") : "- none"),
       "\nExplicit memory:\n" + memoryBlock,
     ]),
@@ -179,7 +192,8 @@ export async function generateChatReply(
             due_date: { type: "STRING", description: "HANYA jika user menyebut tenggat. Format YYYY-MM-DD atau frasa natural user ('besok', 'kamis depan'). JANGAN diisi kalau user tidak menyebut tanggal." },
             due_time: { type: "STRING", description: "Jam spesifik HH:mm. Isi HANYA JIKA user menyebutkan jam." },
             priority: { type: "STRING", enum: ["Low", "Medium", "High"] },
-            content: { type: "STRING", description: "Detail/instruksi untuk kolom Notes di Tasks (boleh panjang: gabungan pesan user tentang tugas ini). Jangan buang detail penting." }
+            content: { type: "STRING", description: "Detail/instruksi untuk kolom Notes di Tasks (boleh panjang: gabungan pesan user tentang tugas ini). Jangan buang detail penting." },
+            project: { type: "STRING", description: "Exact or clear LIFE OS project name from Known projects list. Omit if none / user said without project." },
           },
           required: ["title", "priority"]
         }
@@ -464,7 +478,10 @@ export async function generateTaskBriefing(
     return emptyBriefingReply();
   }
 
-  const taskData = tasksForBriefing.map(t => `- ${t.task}${t.due ? ` (Jatuh tempo: ${t.due})` : ""}`).join("\n");
+  const taskData = tasksForBriefing.map((t) => {
+    const label = t.projectName?.trim() ? t.projectName.trim() : "Tanpa project";
+    return `- [${label}] ${t.task}${t.due ? ` (Jatuh tempo: ${t.due})` : ""}`;
+  }).join("\n");
   const taskTitles = tasksForBriefing.map(t => t.task).join(", ");
   const memoryBlock = formatMemoriesForPrompt(context.memories);
 
@@ -483,6 +500,7 @@ export async function generateTaskBriefing(
     `Daftar tugas untuk dibrief (HANYA ini, jangan tambah atau mengarang):\n${taskData}`,
     `Waktu saat ini: ${todayStr}`,
     "List hanya tugas yang disupply. Jangan membuat tugas fiktif.",
+    "Kelompokkan secara natural per project bila ada.",
     "DILARANG KERAS menyebutkan tahun, tanggal persis, atau kata 'prioritas'. Sebutkan waktu dengan natural (misal: 'hari ini', 'besok pagi', 'sebentar lagi').",
     sourceRules,
     "\nExplicit memory:\n" + memoryBlock,

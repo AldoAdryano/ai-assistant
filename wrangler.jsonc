@@ -1,0 +1,16 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "personal-ai-whatsapp",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-30",
+  "vars": {
+    "GEMINI_MODEL": "gemini-3.5-flash-lite",
+    "NOTION_VERSION": "2026-03-11"
+  },
+  "kv_namespaces": [
+    { "binding": "DEDUP_KV" }
+  ],
+  "triggers": {
+    "crons": ["*/10 * * * *"]
+  }
+}

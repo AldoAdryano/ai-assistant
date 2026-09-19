@@ -1,0 +1,25 @@
+node_modules/
+.dev.vars
+.wrangler/
+coverage/
+.DS_Store
+.worktrees/
+.env
+.env.*
+!.env.example
+whatsapp-bridge/.env
+whatsapp-bridge/auth_info_baileys/
+whatsapp-bridge/stickers/
+whatsapp-bridge/debug_*.jpg
+whatsapp-bridge/test_*.jpg
+whatsapp-bridge/test_*.png
+whatsapp-bridge/test_*.webp
+whatsapp-bridge/*.log
+backup_v1_stable/
+Chat WhatsApp*/
+percakapan.txt
+session-*.md
+deploy.log
+*.log
+.superpowers/
+scratch/

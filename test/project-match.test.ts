@@ -36,6 +36,26 @@ describe("matchProject", () => {
   it("empty query → none", () => {
     expect(matchProject("  ", projects)).toEqual({ kind: "none" });
   });
+  it("matches by exact project.id", () => {
+    expect(matchProject("2", projects)).toEqual({
+      kind: "one",
+      project: projects[1],
+    });
+  });
+  it("matches Notion UUID id (hyphenated or compact)", () => {
+    const uuidProjects: ProjectRecord[] = [
+      { id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890", name: "UUID Project" },
+      { id: "1", name: "Other" },
+    ];
+    expect(matchProject("a1b2c3d4-e5f6-7890-abcd-ef1234567890", uuidProjects)).toEqual({
+      kind: "one",
+      project: uuidProjects[0],
+    });
+    expect(matchProject("a1b2c3d4e5f67890abcdef1234567890", uuidProjects)).toEqual({
+      kind: "one",
+      project: uuidProjects[0],
+    });
+  });
 });
 
 describe("extractProjectMention", () => {

@@ -5,10 +5,31 @@ export type ProjectMatchResult =
   | { kind: "one"; project: ProjectRecord }
   | { kind: "ambiguous"; candidates: ProjectRecord[] };
 
-/** Exact (ci) → then unique substring contains; 0→none, 1→one, 2+→ambiguous. Empty query → none. */
+const NOTION_UUID_RE =
+  /^[a-f0-9]{8}-?[a-f0-9]{4}-?[a-f0-9]{4}-?[a-f0-9]{4}-?[a-f0-9]{12}$/i;
+
+function normalizeNotionId(id: string): string {
+  return id.replace(/-/g, "").toLowerCase();
+}
+
+function looksLikeNotionId(query: string): boolean {
+  return NOTION_UUID_RE.test(query) || /^[a-f0-9]{32}$/i.test(query);
+}
+
+/** Exact (ci) → then unique substring contains; 0→none, 1→one, 2+→ambiguous. Empty query → none.
+ *  If query equals a project.id (or looks like a Notion UUID matching an id), return that project as one. */
 export function matchProject(query: string, projects: ProjectRecord[]): ProjectMatchResult {
   const q = query.trim();
   if (q === "") return { kind: "none" };
+
+  const byExactId = projects.find((p) => p.id === q);
+  if (byExactId) return { kind: "one", project: byExactId };
+
+  if (looksLikeNotionId(q)) {
+    const norm = normalizeNotionId(q);
+    const byNormId = projects.find((p) => normalizeNotionId(p.id) === norm);
+    if (byNormId) return { kind: "one", project: byNormId };
+  }
 
   const lower = q.toLowerCase();
 

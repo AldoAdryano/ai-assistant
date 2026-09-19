@@ -101,6 +101,10 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
           await deps.clearPendingDelete(env, userId);
           return "Ok, batal hapus. Tidak ada yang dihapus.";
         } else if (isPositiveDeleteConfirm(normalizedText)) {
+          if (pending.kind === "project" && !config.notionProjectsDataSourceId) {
+            await deps.clearPendingDelete(env, userId);
+            return "Projects belum dikonfigurasi.";
+          }
           let successCount = 0;
           let failCount = 0;
           for (const id of pending.ids) {
@@ -458,7 +462,17 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
                   replyMessages.push("Nama project belum diisi.");
                   break;
                 }
-                const knownProjects = await ensureProjects();
+                // Dedicated re-fetch for dup-check — do not trust soft-failed empty cache
+                let knownProjects: ProjectRecord[];
+                try {
+                  knownProjects = await deps.listProjects(config);
+                  projects = knownProjects;
+                  projectsLoaded = true;
+                } catch (err) {
+                  console.error("listProjects failed during create_notion_project dup-check", err);
+                  replyMessages.push("Gagal cek project yang ada. Coba lagi sebentar.");
+                  break;
+                }
                 if (findExactProject(name, knownProjects)) {
                   replyMessages.push(
                     `Project '${name}' sudah ada. Pakai itu atau pilih nama lain.`,
@@ -471,11 +485,16 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
                   const naturalParsed = deps.parseIndonesianNaturalDate(deadline, new Date());
                   if (naturalParsed) deadline = naturalParsed;
                 }
-                await deps.createProject(config, {
+                const createdId = await deps.createProject(config, {
                   name,
                   ...(area ? { area } : {}),
                   ...(deadline ? { deadline } : {}),
                 });
+                projects = [
+                  ...knownProjects,
+                  { id: createdId, name, ...(area ? { area } : {}) },
+                ];
+                projectsLoaded = true;
                 replyMessages.push(`Project '${name}' sudah dibuat.`);
                 break;
               }

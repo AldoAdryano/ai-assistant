@@ -260,6 +260,7 @@ describe("handleUserMessage (AI-Driven)", () => {
   });
 
   it("archives pending project delete via archiveProject on ya", async () => {
+    const projectsConfig = { notionProjectsDataSourceId: "projects-ds" } as AppConfig;
     const d = deps({
       getPendingDelete: vi.fn(async () => ({
         kind: "project" as const,
@@ -268,12 +269,12 @@ describe("handleUserMessage (AI-Driven)", () => {
         createdAt: Date.now(),
       })),
     });
-    const reply = await handleUserMessage(env, 123, config, { text: "ya" }, d);
+    const reply = await handleUserMessage(env, 123, projectsConfig, { text: "ya" }, d);
     expect(d.generateChatReply).not.toHaveBeenCalled();
     expect(d.createTask).not.toHaveBeenCalled();
     expect(d.archiveTask).not.toHaveBeenCalled();
     expect(d.archiveProject).toHaveBeenCalledTimes(1);
-    expect(d.archiveProject).toHaveBeenCalledWith(config, "proj-1");
+    expect(d.archiveProject).toHaveBeenCalledWith(projectsConfig, "proj-1");
     expect(d.clearPendingDelete).toHaveBeenCalledWith(env, 123);
     expect(reply).toMatch(/berhasil menghapus 1 project/i);
   });
@@ -1064,6 +1065,69 @@ describe("handleUserMessage (AI-Driven)", () => {
       expect(reply).toMatch(/Portfolio/i);
     });
 
+    it("create_notion_project refuses when listProjects throws (no fail-open)", async () => {
+      const d = deps({
+        listProjects: vi.fn(async () => {
+          throw new Error("Notion down");
+        }),
+        createProject: vi.fn(async () => "proj-new"),
+        generateChatReply: vi.fn()
+          .mockResolvedValueOnce({
+            type: "function_calls",
+            calls: [{
+              name: "create_notion_project",
+              args: { name: "Liburan Mars" },
+            }],
+          })
+          .mockResolvedValue({ type: "text", text: "ok" }) as any,
+      });
+      const reply = await handleUserMessage(
+        env,
+        123,
+        projectsConfig,
+        { text: "buat project Liburan Mars" },
+        d,
+      );
+      expect(d.createProject).not.toHaveBeenCalled();
+      expect(reply).toMatch(/gagal cek|coba lagi/i);
+    });
+
+    it("create_notion_project refreshes cache so same-turn update can match new project", async () => {
+      const d = deps({
+        listProjects: vi.fn(async () => sampleProjects),
+        createProject: vi.fn(async () => "proj-mars"),
+        updateProject: vi.fn(async () => undefined),
+        generateChatReply: vi.fn()
+          .mockResolvedValueOnce({
+            type: "function_calls",
+            calls: [
+              {
+                name: "create_notion_project",
+                args: { name: "Liburan Mars" },
+              },
+              {
+                name: "update_notion_project",
+                args: { project: "Liburan Mars", area: "Belajar" },
+              },
+            ],
+          })
+          .mockResolvedValue({ type: "text", text: "ok" }) as any,
+      });
+      const reply = await handleUserMessage(
+        env,
+        123,
+        projectsConfig,
+        { text: "buat project Liburan Mars lalu set area" },
+        d,
+      );
+      expect(d.createProject).toHaveBeenCalledTimes(1);
+      expect(d.updateProject).toHaveBeenCalledWith(projectsConfig, "proj-mars", {
+        area: "Belajar",
+      });
+      expect(reply).toMatch(/sudah dibuat/i);
+      expect(reply).toMatch(/berhasil|diperbarui|diubah/i);
+    });
+
     it("create_notion_project soft-disables when projects not configured", async () => {
       const disabledConfig = { notionProjectsDataSourceId: null } as AppConfig;
       const d = deps({
@@ -1208,6 +1272,50 @@ describe("handleUserMessage (AI-Driven)", () => {
       expect(d.archiveProject).toHaveBeenCalledWith(projectsConfig, "proj-port");
       expect(d.archiveTask).not.toHaveBeenCalled();
       expect(reply).toMatch(/berhasil menghapus 1 project/i);
+    });
+
+    it("confirm ya for pending project delete clears without archive when projects not configured", async () => {
+      const disabledConfig = { notionProjectsDataSourceId: null } as AppConfig;
+      const d = deps({
+        getPendingDelete: vi.fn(async () => ({
+          kind: "project" as const,
+          ids: ["proj-port"],
+          summary: "Portfolio",
+          createdAt: Date.now(),
+        })),
+      });
+      const reply = await handleUserMessage(env, 123, disabledConfig, { text: "ya" }, d);
+      expect(d.archiveProject).not.toHaveBeenCalled();
+      expect(d.clearPendingDelete).toHaveBeenCalledWith(env, 123);
+      expect(d.generateChatReply).not.toHaveBeenCalled();
+      expect(reply).toContain("Projects belum dikonfigurasi.");
+    });
+
+    it("update_notion_project matches by project id", async () => {
+      const d = deps({
+        listProjects: vi.fn(async () => sampleProjects),
+        updateProject: vi.fn(async () => undefined),
+        generateChatReply: vi.fn()
+          .mockResolvedValueOnce({
+            type: "function_calls",
+            calls: [{
+              name: "update_notion_project",
+              args: { project: "proj-ikn", area: "Kerja" },
+            }],
+          })
+          .mockResolvedValue({ type: "text", text: "ok" }) as any,
+      });
+      const reply = await handleUserMessage(
+        env,
+        123,
+        projectsConfig,
+        { text: "ubah area project proj-ikn" },
+        d,
+      );
+      expect(d.updateProject).toHaveBeenCalledWith(projectsConfig, "proj-ikn", {
+        area: "Kerja",
+      });
+      expect(reply).toMatch(/berhasil|diperbarui|diubah/i);
     });
   });
 });

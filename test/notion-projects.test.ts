@@ -63,6 +63,8 @@ it("listProjects maps Project title and optional Area", async () => {
             },
           },
         ],
+        has_more: false,
+        next_cursor: null,
       }),
       { status: 200 },
     );
@@ -72,6 +74,51 @@ it("listProjects maps Project title and optional Area", async () => {
   expect(projects).toEqual([
     { id: "proj-1", name: "Persiapan IKN", area: "Work" },
     { id: "proj-2", name: "Portfolio" },
+  ]);
+});
+
+it("listProjects follows next_cursor until exhausted", async () => {
+  const bodies: unknown[] = [];
+  const fakeFetch: typeof fetch = async (_input, init) => {
+    bodies.push(JSON.parse(String(init?.body)));
+    if (bodies.length === 1) {
+      return new Response(
+        JSON.stringify({
+          results: [
+            {
+              id: "proj-1",
+              properties: { Project: { title: [{ plain_text: "Page One" }] } },
+            },
+          ],
+          has_more: true,
+          next_cursor: "cursor-abc",
+        }),
+        { status: 200 },
+      );
+    }
+    return new Response(
+      JSON.stringify({
+        results: [
+          {
+            id: "proj-2",
+            properties: { Project: { title: [{ plain_text: "Page Two" }] } },
+          },
+        ],
+        has_more: false,
+        next_cursor: null,
+      }),
+      { status: 200 },
+    );
+  };
+
+  const projects = await listProjects(configWithProjects, fakeFetch);
+  expect(bodies).toEqual([
+    { page_size: 50 },
+    { page_size: 50, start_cursor: "cursor-abc" },
+  ]);
+  expect(projects).toEqual([
+    { id: "proj-1", name: "Page One" },
+    { id: "proj-2", name: "Page Two" },
   ]);
 });
 
@@ -177,6 +224,46 @@ it("listActiveTasks fills projectId and projectName from relation + listProjects
       status: "Doing",
       priority: "Medium",
       projectId: null,
+      projectName: null,
+    },
+  ]);
+});
+
+it("listActiveTasks still returns tasks if listProjects throws", async () => {
+  const fakeFetch: typeof fetch = async (input) => {
+    const url = String(input);
+    if (url.includes("/data_sources/tasks-ds/query")) {
+      return new Response(
+        JSON.stringify({
+          results: [
+            {
+              id: "task-1",
+              properties: {
+                Task: { title: [{ plain_text: "Linked task" }] },
+                Status: { select: { name: "To Do" } },
+                Priority: { select: { name: "High" } },
+                Project: { relation: [{ id: "proj-1" }] },
+              },
+            },
+          ],
+        }),
+        { status: 200 },
+      );
+    }
+    if (url.includes("/data_sources/projects-ds/query")) {
+      throw new Error("Projects API unavailable");
+    }
+    throw new Error(`unexpected url: ${url}`);
+  };
+
+  const tasks = await listActiveTasks(configWithProjects, undefined, fakeFetch);
+  expect(tasks).toEqual([
+    {
+      id: "task-1",
+      task: "Linked task",
+      status: "To Do",
+      priority: "High",
+      projectId: "proj-1",
       projectName: null,
     },
   ]);

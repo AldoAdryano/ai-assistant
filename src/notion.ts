@@ -88,18 +88,41 @@ export async function createNote(config: AppConfig, note: { text: string; noteTy
   return result.id;
 }
 
+const PROJECTS_PAGE_SIZE = 50;
+const PROJECTS_MAX_ITEMS = 200;
+
 export async function listProjects(
   config: AppConfig,
   fetchImpl: typeof fetch = fetch,
 ): Promise<ProjectRecord[]> {
   if (!config.notionProjectsDataSourceId) return [];
-  const result = await notionRequest<{ results: any[] }>(
-    config,
-    `/data_sources/${config.notionProjectsDataSourceId}/query`,
-    { method: "POST", body: JSON.stringify({ page_size: 50 }) },
-    fetchImpl,
-  );
-  return result.results
+
+  const pages: any[] = [];
+  let startCursor: string | undefined;
+  let hasMore = true;
+
+  while (hasMore && pages.length < PROJECTS_MAX_ITEMS) {
+    const body: Record<string, unknown> = { page_size: PROJECTS_PAGE_SIZE };
+    if (startCursor) body.start_cursor = startCursor;
+
+    const result = await notionRequest<{
+      results: any[];
+      next_cursor: string | null;
+      has_more: boolean;
+    }>(
+      config,
+      `/data_sources/${config.notionProjectsDataSourceId}/query`,
+      { method: "POST", body: JSON.stringify(body) },
+      fetchImpl,
+    );
+
+    pages.push(...result.results);
+    hasMore = Boolean(result.has_more) && Boolean(result.next_cursor);
+    startCursor = result.next_cursor ?? undefined;
+  }
+
+  return pages
+    .slice(0, PROJECTS_MAX_ITEMS)
     .map((page): ProjectRecord | null => {
       const name = titleText(page.properties?.Project);
       if (!name) return null;
@@ -129,8 +152,17 @@ async function projectNameById(
   fetchImpl: typeof fetch,
 ): Promise<Map<string, string> | null> {
   if (!config.notionProjectsDataSourceId) return null;
-  const projects = await listProjects(config, fetchImpl);
-  return new Map(projects.map((p) => [p.id, p.name]));
+  try {
+    const projects = await listProjects(config, fetchImpl);
+    return new Map(projects.map((p) => [p.id, p.name]));
+  } catch (error) {
+    console.error(
+      "listProjects failed during task enrichment:",
+      error instanceof Error ? error.message : error,
+    );
+    // Empty map: still extract projectId from relations; projectName stays null.
+    return new Map();
+  }
 }
 
 export async function createTask(

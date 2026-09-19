@@ -44,10 +44,11 @@ const BRAIN_V1_RULES = [
   "BRAIN V1 — INTENT & ACTION SAFETY (WAJIB sebelum memilih tool):",
   "1. Klasifikasikan intent user dulu: task | inbox | memory | routine | chat | clarify.",
   "2. Intent chat atau pertanyaan biasa → JANGAN panggil tool create Notion (task/note/memory/routine). Balas teks saja.",
-  "3. Beberapa pesan atau satu topik tanpa daftar tugas terpisah yang jelas → buat SATU task ATAU tanya 'satu atau beberapa?'; DILARANG spam create_notion_task.",
+  "3. Beberapa pesan atau satu topik tanpa daftar tugas terpisah yang jelas → buat SATU create_notion_task (bukan beberapa). Detail/instruksi panjang masuk parameter content (kolom Notes task), BUKAN create_notion_note/Inbox kecuali user minta catat ide.",
   "4. Hapus massal / ALL / multi-delete → tanya konfirmasi dulu (sistem juga menegakkan ini).",
-  "5. Task + deadline jelas (policy B) → langsung create_notion_task tanpa menunda.",
-  "6. Parallel multi-tool HANYA untuk aksi berbeda yang user minta secara eksplisit — bukan multi-create spekulatif dari satu topik.",
+  "5. DILARANG mengarang due_date/due_time. Isi due_date HANYA jika Aldo menyebut tenggat/tanggal/jam di pesannya. Jika task jelas tapi tenggat belum disebut → create_notion_task TANPA due_date, isi content dengan detail, lalu TANYA tenggatnya.",
+  "6. Task + deadline jelas dari user (policy B) → langsung create dengan due_date.",
+  "7. Parallel multi-tool HANYA untuk aksi berbeda yang user minta secara eksplisit — bukan multi-create spekulatif dari satu topik.",
 ].join(" ");
 
 const GROUP_CHAT_RULES = [
@@ -86,13 +87,13 @@ export async function generateChatReply(
     ...(isGroup ? [GROUP_CHAT_RULES] : [
       BRAIN_V1_RULES,
       "You are an intelligent task management AI.",
-      "CRITICAL: If the user mentions a task or intent that lacks a specific due date, and you ask a clarification question (such as asking for the day or date), when the user replies with that time/date detail, you MUST immediately combine it with the pending task context and invoke the appropriate tool (e.g., create_notion_task). Do not just respond with conversational text if a clear tool action can now be completed.",
+      "CRITICAL: If the user already has a pending new task (title/details in history) and replies with only a time/date, combine that with the pending task and call create_notion_task (or update_notion_task if the task already exists). Do not invent dates.",
       "Use supplied tasks and explicit memory when relevant.",
       "You have FULL control over task, note, and memory management via tools.",
       "Always use tools when the user asks to create, read, update, or delete tasks/notes/memory.",
-      "Do not invent missing Notion data.",
-      "When updating or creating a task's due date, use natural language (e.g., 'besok', 'minggu depan', '2026-09-08').",
-      "MANDATORY TASK RULE: Saat menagih deadline tugas, tanyakan tanggal/harinya, DAN tanyakan secara opsional apakah ada jam/menit spesifiknya atau cukup tanggalnya saja.",
+      "Do not invent missing Notion data — especially due dates.",
+      "When updating or creating a task's due date, use natural language (e.g., 'besok', 'minggu depan', '2026-09-08') ONLY when the user said it.",
+      "MANDATORY: Jika membuat task tanpa tenggat dari user, setelah tool call tanyakan tenggatnya.",
       "TOOL SELECTION RULES:",
       "1. CREATING: If the context of the conversation is about a NEW task (e.g., the user just mentioned a new homework, or you just asked a clarifying question about a NEW task and the user answered), you MUST use `create_notion_task`.",
       "2. UPDATING: ONLY use `update_notion_task` if the user EXPLICITLY asks to change, move, or modify an ALREADY EXISTING task. Do NOT hallucinate or reuse a `taskId` for a new task. If the user wants to update a task but you don't know the ID, use `read_notion_tasks` first to find it.",
@@ -118,17 +119,17 @@ export async function generateChatReply(
       {
         type: "function",
         name: "create_notion_task",
-        description: "Creates a BRAND NEW task in Notion. EXTREMELY IMPORTANT: Use this tool even if the user is just providing a missing detail (like replying 'Selasa') to complete a new task creation from the previous conversational turn. Do not execute this tool if the deadline is unknown. Ask the user first.",
+        description: "Creates a BRAND NEW task in Notion Tasks. Use when completing a new task after the user gave a missing deadline (e.g. replied 'Selasa'). If the user described task details across messages, put those details in content (Notes column). NEVER invent due_date — omit due_date when the user did not state a deadline, then ask for it in your reply text.",
         parameters: {
           type: "OBJECT",
           properties: {
-            title: { type: "STRING", description: "CRITICAL: The actual specific subject or name of the task explicitly stated by the user in the previous messages (e.g., 'Tugas matkul psikologi...'). YOU ARE STRICTLY FORBIDDEN from using generic placeholder names like 'Tugas baru', 'New Task', or 'Tugas'. You MUST extract the real, original context." },
-            due_date: { type: "STRING", description: "Tanggal tenggat. Boleh format YYYY-MM-DD, atau frasa natural persis seperti ucapan user (contoh: 'kamis depan', 'kemarin hari minggu', 'besok')." },
-            due_time: { type: "STRING", description: "Jam spesifik baru dalam format HH:mm (contoh: '13:15', '07:43'). Isi HANYA JIKA user menyebutkan jam." },
+            title: { type: "STRING", description: "CRITICAL: Short task title only (e.g. 'Instal Simurelay & instalasi listrik sederhana'). NOT the full multi-paragraph instructions — those go in content." },
+            due_date: { type: "STRING", description: "HANYA jika user menyebut tenggat. Format YYYY-MM-DD atau frasa natural user ('besok', 'kamis depan'). JANGAN diisi kalau user tidak menyebut tanggal." },
+            due_time: { type: "STRING", description: "Jam spesifik HH:mm. Isi HANYA JIKA user menyebutkan jam." },
             priority: { type: "STRING", enum: ["Low", "Medium", "High"] },
-            content: { type: "STRING", description: "Optional. Additional context or details." }
+            content: { type: "STRING", description: "Detail/instruksi untuk kolom Notes di Tasks (boleh panjang: gabungan pesan user tentang tugas ini). Jangan buang detail penting." }
           },
-          required: ["title", "priority", "due_date"]
+          required: ["title", "priority"]
         }
       },
       {

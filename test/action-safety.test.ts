@@ -7,6 +7,8 @@ import {
   isNegativeDeleteConfirm,
   PENDING_DELETE_FRESH_MS,
   userExplicitMultiCreate,
+  userMentionsDeadline,
+  stripInventedDueDate,
 } from "../src/action-safety";
 
 describe("userExplicitMultiCreate", () => {
@@ -103,5 +105,33 @@ describe("buildDeleteTitleSummary", () => {
     expect(buildDeleteTitleSummary(["A", "B", "C", "D"])).toBe("A, B, C");
     const long = "x".repeat(50);
     expect(buildDeleteTitleSummary([long])).toMatch(/…$/);
+  });
+});
+
+describe("userMentionsDeadline / stripInventedDueDate", () => {
+  it("detects deadline phrases in user text", () => {
+    expect(userMentionsDeadline("buat tugas laprak deadline besok")).toBe(true);
+    expect(userMentionsDeadline("simurelay instal di hp buat laporan")).toBe(false);
+  });
+
+  it("strips due when user never mentioned a date", () => {
+    const call = {
+      name: "create_notion_task",
+      args: { title: "Simurelay", priority: "High", due_date: "2026-09-22", content: "detail" },
+    };
+    const r = stripInventedDueDate(call, "coba aplikasi simurelay\nbuat instalasi");
+    expect(r.stripped).toBe(true);
+    expect(r.call.args.due_date).toBeUndefined();
+    expect(r.call.args.content).toBe("detail");
+  });
+
+  it("keeps due when user said besok", () => {
+    const call = {
+      name: "create_notion_task",
+      args: { title: "Laprak", priority: "High", due_date: "besok" },
+    };
+    const r = stripInventedDueDate(call, "buat tugas laprak deadline besok");
+    expect(r.stripped).toBe(false);
+    expect(r.call.args.due_date).toBe("besok");
   });
 });

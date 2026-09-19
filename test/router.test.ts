@@ -87,8 +87,36 @@ describe("handleUserMessage (AI-Driven)", () => {
     });
     const reply = await handleUserMessage(env, 123, config, { text: "Tolong ingatkan beli susu besok" }, d);
     expect(d.parseIndonesianDeadline).toHaveBeenCalledWith("deadline besok");
-    expect(d.createTask).toHaveBeenCalledWith(config, { task: "Beli susu\n\nKonteks: Di minimarket", priority: "High", due_date: "2026-09-02" });
+    expect(d.createTask).toHaveBeenCalledWith(config, { task: "Beli susu", priority: "High", due_date: "2026-09-02", notes: "Di minimarket" });
     expect(reply).toContain("Tugas 'Beli susu' sudah ditambahkan dengan prioritas High");
+  });
+
+  it("strips invented due_date when user never mentioned a deadline and asks for tenggat", async () => {
+    const d = deps({
+      generateChatReply: vi.fn()
+        .mockResolvedValueOnce({
+          type: "function_calls",
+          calls: [{
+            name: "create_notion_task",
+            args: {
+              title: "Instal Simurelay",
+              priority: "High",
+              due_date: "2026-09-22",
+              content: "instal di hp\nbuat instalasi listrik\nscreenshoot ke grup",
+            },
+          }],
+        })
+        .mockResolvedValue({ type: "text", text: "ok" }) as any,
+    });
+    const reply = await handleUserMessage(env, 123, config, {
+      text: "ini materi pertama coba aplikasi simurelay\ninstal di hp buat instalasi listrik\nscreenshoot laporan ke grup",
+    }, d);
+    expect(d.createTask).toHaveBeenCalledWith(config, {
+      task: "Instal Simurelay",
+      priority: "High",
+      notes: "instal di hp\nbuat instalasi listrik\nscreenshoot ke grup",
+    });
+    expect(reply).toMatch(/tenggat/i);
   });
 
   it("handles create_notion_task missing date clarification", async () => {

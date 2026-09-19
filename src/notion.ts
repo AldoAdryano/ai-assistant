@@ -86,7 +86,11 @@ export async function createNote(config: AppConfig, note: { text: string; noteTy
   return result.id;
 }
 
-export async function createTask(config: AppConfig, task: { task: string; priority: Priority; due_date?: string; due_time?: string }, fetchImpl: typeof fetch = fetch): Promise<string> {
+export async function createTask(
+  config: AppConfig,
+  task: { task: string; priority: Priority; due_date?: string; due_time?: string; notes?: string },
+  fetchImpl: typeof fetch = fetch,
+): Promise<string> {
   const cleanTitle = stripDeadlineLeakFromTitle(task.task);
   const properties: Record<string, unknown> = {
     Task: { title: textItems(cleanTitle) }, Status: { select: { name: "To Do" } }, Priority: { select: { name: task.priority } }, Source: { select: { name: "Telegram" } },
@@ -94,6 +98,10 @@ export async function createTask(config: AppConfig, task: { task: string; priori
   const combinedDue = task.due_time && task.due_date ? `${task.due_date}T${task.due_time}:00+07:00` : task.due_date;
   const normDue = normalizeNotionDue(combinedDue);
   if (normDue) properties.Due = { date: { start: normDue } };
+  const notes = typeof task.notes === "string" ? task.notes.trim() : "";
+  if (notes) {
+    properties.Notes = { rich_text: textItems(notes) };
+  }
   const result = await notionRequest<{ id: string }>(config, "/pages", {
     method: "POST",
     body: JSON.stringify({ parent: { type: "data_source_id", data_source_id: config.notionTasksDataSourceId }, properties }),

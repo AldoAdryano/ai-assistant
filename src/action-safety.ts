@@ -78,6 +78,45 @@ export function isNegativeDeleteConfirm(userText: string): boolean {
   return NEGATIVE_CONFIRM.test(userText.trim());
 }
 
+/** True if the user message itself mentions a due date / time (not the model inventing one). */
+export function userMentionsDeadline(userText: string): boolean {
+  const t = userText.toLowerCase();
+  return (
+    /\b(deadline|tenggat|due|jatuh\s*tempo)\b/.test(t) ||
+    /\b(besok|lusa|kemarin|hari\s+ini)\b/.test(t) ||
+    /\b(senin|selasa|rabu|kamis|jumat|jum'?at|sabtu|minggu)(\s+depan)?\b/.test(t) ||
+    /\bminggu\s+depan\b/.test(t) ||
+    /\btanggal\s+\d{1,2}\b/.test(t) ||
+    /\b\d{1,2}[\/\-]\d{1,2}([\/\-]\d{2,4})?\b/.test(t) ||
+    /\b\d{4}-\d{2}-\d{2}\b/.test(t) ||
+    /\bjam\s+\d{1,2}/.test(t)
+  );
+}
+
+/**
+ * Strip due_date/due_time from create_notion_task when the user never mentioned a deadline.
+ * Returns whether an invented due was removed.
+ */
+export function stripInventedDueDate<T extends { name: string; args: any }>(
+  call: T,
+  userText: string,
+): { call: T; stripped: boolean } {
+  if (call.name !== "create_notion_task") {
+    return { call, stripped: false };
+  }
+  const hasDue = Boolean(call.args?.due_date || call.args?.due_time);
+  if (!hasDue) {
+    return { call, stripped: false };
+  }
+  if (userMentionsDeadline(userText)) {
+    return { call, stripped: false };
+  }
+  const nextArgs = { ...call.args };
+  delete nextArgs.due_date;
+  delete nextArgs.due_time;
+  return { call: { ...call, args: nextArgs }, stripped: true };
+}
+
 export function isPendingDeleteFresh(pending: PendingDelete, now = Date.now()): boolean {
   return now - pending.createdAt <= PENDING_DELETE_FRESH_MS;
 }

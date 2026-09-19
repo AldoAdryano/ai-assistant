@@ -47,6 +47,22 @@ it("creates a task with defaults and optional due date", async () => {
   expect(bodyWithoutDue.properties.Due).toBeUndefined();
 });
 
+it("creates a task with Notes rich_text from notes field", async () => {
+  let body: any;
+  const fakeFetch: typeof fetch = async (_input, init) => {
+    body = JSON.parse(String(init?.body));
+    return new Response(JSON.stringify({ id: "page-task-notes" }), { status: 200 });
+  };
+  await createTask(config, {
+    task: "Simurelay",
+    priority: "High",
+    notes: "instal di hp\nbuat instalasi listrik",
+  }, fakeFetch);
+  expect(body.properties.Task.title[0].text.content).toBe("Simurelay");
+  expect(body.properties.Notes.rich_text[0].text.content).toContain("instal di hp");
+  expect(body.properties.Due).toBeUndefined();
+});
+
 it("Task 53: creates a task with sanitized title and correctly formatted datetime", async () => {
   let bodyWithTime: any;
   const fakeFetch: typeof fetch = async (_input, init) => { bodyWithTime = JSON.parse(String(init?.body)); return new Response(JSON.stringify({ id: "page-task" }), { status: 200 }); };

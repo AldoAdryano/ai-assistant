@@ -8,6 +8,7 @@ import {
   isPendingDeleteFresh,
   isPositiveDeleteConfirm,
   isNegativeDeleteConfirm,
+  stripInventedDueDate,
 } from "./action-safety";
 import type { PendingDelete } from "./action-safety";
 import { parseIndonesianDeadline, parseIndonesianNaturalDate } from "./date";
@@ -227,14 +228,16 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
           try {
             switch (call.name) {
               case "create_notion_task": {
-                const titleLower = (call.args.title || "").toLowerCase().trim();
+                const { call: sanitizedCall, stripped: inventedDueStripped } = stripInventedDueDate(call, payload.text);
+                const args = sanitizedCall.args;
+                const titleLower = (args.title || "").toLowerCase().trim();
                 if (titleLower && createdTaskTitles.has(titleLower)) {
-                  replyMessages.push(`[System]: Tugas dengan judul '${call.args.title}' sudah ditambahkan di giliran sebelumnya. Skipping.`);
+                  replyMessages.push(`[System]: Tugas dengan judul '${args.title}' sudah ditambahkan di giliran sebelumnya. Skipping.`);
                   continue;
                 }
                 if (titleLower) createdTaskTitles.add(titleLower);
                 
-                let finalDueDate = call.args.due_date;
+                let finalDueDate = args.due_date;
                 if (finalDueDate) {
                   const naturalParsed = deps.parseIndonesianNaturalDate(finalDueDate, new Date());
                   if (naturalParsed) {
@@ -253,14 +256,20 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
                     }
                   }
                 }
+                const notes = typeof args.content === "string" ? args.content.trim() : "";
                 const taskPayload = { 
-                  task: (call.args.title || "") + (call.args.content ? `\n\nKonteks: ${call.args.content}` : ""), 
-                  priority: call.args.priority || "Medium", 
+                  task: String(args.title || ""), 
+                  priority: args.priority || "Medium", 
                   ...(finalDueDate ? { due_date: finalDueDate } : {}),
-                  ...(call.args.due_time ? { due_time: call.args.due_time } : {})
+                  ...(args.due_time ? { due_time: args.due_time } : {}),
+                  ...(notes ? { notes } : {}),
                 };
                 await deps.createTask(config, taskPayload);
-                replyMessages.push(`Tugas '${call.args.title}' sudah ditambahkan dengan prioritas ${call.args.priority || "Medium"}.`);
+                let createMsg = `Tugas '${args.title}' sudah ditambahkan dengan prioritas ${args.priority || "Medium"}.`;
+                if (!finalDueDate || inventedDueStripped) {
+                  createMsg += " Tenggatnya kapan, Aldo?";
+                }
+                replyMessages.push(createMsg);
                 break;
               }
               case "read_notion_tasks": {

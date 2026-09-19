@@ -1,5 +1,7 @@
-import type { AppConfig, MemoryCategory, MemoryRecord, NoteType, Priority, RoutineRecord, TaskRecord } from "./types";
+import type { AppConfig, MemoryCategory, MemoryRecord, NoteType, Priority, ProjectRecord, RoutineRecord, TaskRecord } from "./types";
 import { normalizeNotionDue, stripDeadlineLeakFromTitle, nowWib, getJakartaDateParts } from "./date";
+
+export const TASK_PROJECT_PROPERTY = "Project";
 
 export class NotionRejectionError extends Error {
   constructor(message: string) {
@@ -86,9 +88,54 @@ export async function createNote(config: AppConfig, note: { text: string; noteTy
   return result.id;
 }
 
+export async function listProjects(
+  config: AppConfig,
+  fetchImpl: typeof fetch = fetch,
+): Promise<ProjectRecord[]> {
+  if (!config.notionProjectsDataSourceId) return [];
+  const result = await notionRequest<{ results: any[] }>(
+    config,
+    `/data_sources/${config.notionProjectsDataSourceId}/query`,
+    { method: "POST", body: JSON.stringify({ page_size: 50 }) },
+    fetchImpl,
+  );
+  return result.results
+    .map((page): ProjectRecord | null => {
+      const name = titleText(page.properties?.Project);
+      if (!name) return null;
+      const area = page.properties?.Area?.select?.name;
+      return {
+        id: page.id,
+        name,
+        ...(typeof area === "string" ? { area } : {}),
+      };
+    })
+    .filter((project): project is ProjectRecord => project !== null);
+}
+
+function projectFieldsFromPage(
+  page: any,
+  byId: Map<string, string> | null,
+): { projectId: string | null; projectName: string | null } | Record<string, never> {
+  if (!byId) return {};
+  const rel = page.properties?.[TASK_PROJECT_PROPERTY]?.relation;
+  const projectId = Array.isArray(rel) && rel[0]?.id ? (rel[0].id as string) : null;
+  const projectName = projectId ? (byId.get(projectId) ?? null) : null;
+  return { projectId, projectName };
+}
+
+async function projectNameById(
+  config: AppConfig,
+  fetchImpl: typeof fetch,
+): Promise<Map<string, string> | null> {
+  if (!config.notionProjectsDataSourceId) return null;
+  const projects = await listProjects(config, fetchImpl);
+  return new Map(projects.map((p) => [p.id, p.name]));
+}
+
 export async function createTask(
   config: AppConfig,
-  task: { task: string; priority: Priority; due_date?: string; due_time?: string; notes?: string },
+  task: { task: string; priority: Priority; due_date?: string; due_time?: string; notes?: string; projectId?: string },
   fetchImpl: typeof fetch = fetch,
 ): Promise<string> {
   const cleanTitle = stripDeadlineLeakFromTitle(task.task);
@@ -101,6 +148,9 @@ export async function createTask(
   const notes = typeof task.notes === "string" ? task.notes.trim() : "";
   if (notes) {
     properties.Notes = { rich_text: textItems(notes) };
+  }
+  if (task.projectId && config.notionProjectsDataSourceId) {
+    properties[TASK_PROJECT_PROPERTY] = { relation: [{ id: task.projectId }] };
   }
   const result = await notionRequest<{ id: string }>(config, "/pages", {
     method: "POST",
@@ -140,7 +190,8 @@ export async function listActiveTasks(config: AppConfig, statusFilter?: string, 
   const result = await notionRequest<{ results: any[] }>(config, `/data_sources/${config.notionTasksDataSourceId}/query`, {
     method: "POST", body: JSON.stringify({ filter: filterParams, page_size: 50 }),
   }, fetchImpl);
-  
+
+  const byId = await projectNameById(config, fetchImpl);
   const rank: Record<Priority, number> = { High: 0, Medium: 1, Low: 2 };
   return result.results.map((page): TaskRecord | null => {
     const status = page.properties?.Status?.select?.name;
@@ -149,7 +200,14 @@ export async function listActiveTasks(config: AppConfig, statusFilter?: string, 
     if (!statusFilter && status !== "To Do" && status !== "Doing") return null;
     if (priority !== "Low" && priority !== "Medium" && priority !== "High") return null;
     const due = page.properties?.Due?.date?.start;
-    return { id: page.id, task: titleText(page.properties?.Task), status, priority, ...(typeof due === "string" ? { due } : {}) };
+    return {
+      id: page.id,
+      task: titleText(page.properties?.Task),
+      status,
+      priority,
+      ...(typeof due === "string" ? { due } : {}),
+      ...projectFieldsFromPage(page, byId),
+    };
   }).filter((task): task is TaskRecord => task !== null && task.task !== "").sort((a, b) => rank[a.priority] - rank[b.priority]);
 }
 
@@ -161,14 +219,22 @@ export async function getAllTasks(config: AppConfig, fetchImpl: typeof fetch = f
   const result = await notionRequest<{ results: any[] }>(config, `/data_sources/${config.notionTasksDataSourceId}/query`, {
     method: "POST", body: JSON.stringify({ page_size: 100 }),
   }, fetchImpl);
-  
+
+  const byId = await projectNameById(config, fetchImpl);
   const rank: Record<Priority, number> = { High: 0, Medium: 1, Low: 2 };
   return result.results.map((page): TaskRecord | null => {
     const status = page.properties?.Status?.select?.name;
     const priority = page.properties?.Priority?.select?.name;
     if (priority !== "Low" && priority !== "Medium" && priority !== "High") return null;
     const due = page.properties?.Due?.date?.start;
-    return { id: page.id, task: titleText(page.properties?.Task), status, priority, ...(typeof due === "string" ? { due } : {}) };
+    return {
+      id: page.id,
+      task: titleText(page.properties?.Task),
+      status,
+      priority,
+      ...(typeof due === "string" ? { due } : {}),
+      ...projectFieldsFromPage(page, byId),
+    };
   }).filter((task): task is TaskRecord => task !== null && task.task !== "").sort((a, b) => rank[a.priority] - rank[b.priority]);
 }
 

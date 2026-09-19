@@ -1,16 +1,19 @@
 import { generateChatReply, GeminiApiError } from "./gemini";
 import type { ChatReply } from "./gemini";
 import { NotionRejectionError, NotionUnknownError, createNote, createTask, listActiveTasks, getAllTasks, getAllNotes, listMemoryContext, recallMemory, upsertMemory, getAllMemory, updateTask, archiveTask, addRoutine } from "./notion";
-import { getInteractionId, saveInteractionId, getChatLog, saveChatLog, clearMemory, getPendingDelete, savePendingDelete, clearPendingDelete, CHAT_LOG_MAX_CHARS } from "./state";
+import { getInteractionId, saveInteractionId, getChatLog, saveChatLog, clearMemory, getPendingDelete, savePendingDelete, clearPendingDelete, getPendingMemory, savePendingMemory, clearPendingMemory, CHAT_LOG_MAX_CHARS } from "./state";
 import {
   buildDeleteTitleSummary,
   filterCreateTaskCalls,
+  formatMemoryPropose,
   isPendingDeleteFresh,
+  isPendingMemoryFresh,
   isPositiveDeleteConfirm,
   isNegativeDeleteConfirm,
+  shouldConfirmMemoryWrite,
   stripInventedDueDate,
 } from "./action-safety";
-import type { PendingDelete } from "./action-safety";
+import type { PendingDelete, PendingMemory } from "./action-safety";
 import { parseIndonesianDeadline, parseIndonesianNaturalDate } from "./date";
 import type { AppConfig, Env } from "./types";
 
@@ -27,8 +30,9 @@ export interface RouterDeps {
   getInteractionId: typeof getInteractionId; saveInteractionId: typeof saveInteractionId;
   getChatLog: typeof getChatLog; saveChatLog: typeof saveChatLog; clearMemory: typeof clearMemory;
   getPendingDelete: typeof getPendingDelete; savePendingDelete: typeof savePendingDelete; clearPendingDelete: typeof clearPendingDelete;
+  getPendingMemory: typeof getPendingMemory; savePendingMemory: typeof savePendingMemory; clearPendingMemory: typeof clearPendingMemory;
 }
-const defaultDeps: RouterDeps = { createNote, createTask, listActiveTasks, getAllTasks, getAllNotes, upsertMemory, recallMemory, listMemoryContext, getAllMemory, updateTask, archiveTask, addRoutine, generateChatReply, parseIndonesianDeadline, parseIndonesianNaturalDate, getInteractionId, saveInteractionId, getChatLog, saveChatLog, clearMemory, getPendingDelete, savePendingDelete, clearPendingDelete };
+const defaultDeps: RouterDeps = { createNote, createTask, listActiveTasks, getAllTasks, getAllNotes, upsertMemory, recallMemory, listMemoryContext, getAllMemory, updateTask, archiveTask, addRoutine, generateChatReply, parseIndonesianDeadline, parseIndonesianNaturalDate, getInteractionId, saveInteractionId, getChatLog, saveChatLog, clearMemory, getPendingDelete, savePendingDelete, clearPendingDelete, getPendingMemory, savePendingMemory, clearPendingMemory };
 const HELP = ["Perintah V1 (AI-Driven):", "• /start atau /help", "• Kirim apa saja, AI akan mengurus sisanya (catatan, tugas, memori)."].join("\n");
 
 const DELETE_TOOL_NAMES = new Set([
@@ -87,6 +91,26 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
             return `Berhasil menghapus ${successCount} ${label}, gagal ${failCount}.`;
           }
           return `Berhasil menghapus ${successCount} ${label}.`;
+        }
+      }
+
+      // Pending-memory confirm/cancel (delete wins if both pending)
+      const pendingMemory = await deps.getPendingMemory(env, userId);
+      if (pendingMemory) {
+        if (!isPendingMemoryFresh(pendingMemory)) {
+          await deps.clearPendingMemory(env, userId);
+          // fall through to Gemini
+        } else if (isNegativeDeleteConfirm(normalizedText)) {
+          await deps.clearPendingMemory(env, userId);
+          return "Ok, batal. Tidak aku ingat.";
+        } else if (isPositiveDeleteConfirm(normalizedText)) {
+          await deps.upsertMemory(config, {
+            key: pendingMemory.key,
+            value: pendingMemory.value,
+            category: pendingMemory.category,
+          });
+          await deps.clearPendingMemory(env, userId);
+          return `Ok, sudah aku ingat *${pendingMemory.key}*.`;
         }
       }
     }
@@ -210,6 +234,7 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
         }
         const callsToProcess = filtered.allowed;
         let pendingDeleteSavedThisTurn = false;
+        let pendingMemorySavedThisTurn = false;
         for (const call of callsToProcess) {
           const callSignature = call.name + JSON.stringify(call.args);
           if (executedTools.has(callSignature)) {
@@ -221,6 +246,13 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
           if (DELETE_TOOL_NAMES.has(call.name) && pendingDeleteSavedThisTurn) {
             replyMessages.push(
               "Satu batch konfirmasi hapus saja per giliran. Konfirmasi yang pertama dulu (balas \"ya\" atau \"jangan\"), baru hapus batch lain.",
+            );
+            continue;
+          }
+
+          if (call.name === "create_notion_memory" && pendingMemorySavedThisTurn) {
+            replyMessages.push(
+              "Satu memori menunggu konfirmasi dulu. Balas \"ya\" atau \"jangan\", baru simpan yang lain.",
             );
             continue;
           }
@@ -287,7 +319,21 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
                 break;
               }
               case "create_notion_memory": {
-                await deps.upsertMemory(config, { key: call.args.key, value: call.args.value, category: call.args.category });
+                const rawCategory = call.args.category;
+                const category = rawCategory === "Profile" ? "Identity" : rawCategory;
+                if (shouldConfirmMemoryWrite({ userText: payload.text, category })) {
+                  const pending: PendingMemory = {
+                    key: call.args.key,
+                    value: call.args.value,
+                    category,
+                    createdAt: Date.now(),
+                  };
+                  await deps.savePendingMemory(env, userId, pending);
+                  pendingMemorySavedThisTurn = true;
+                  replyMessages.push(formatMemoryPropose(pending));
+                  break;
+                }
+                await deps.upsertMemory(config, { key: call.args.key, value: call.args.value, category });
                 replyMessages.push(`Memori '${call.args.key}' sudah disimpan.`);
                 break;
               }

@@ -32,6 +32,9 @@ function deps(overrides: Partial<RouterDeps> = {}): RouterDeps {
     getPendingDelete: vi.fn(async () => null),
     savePendingDelete: vi.fn(async () => undefined),
     clearPendingDelete: vi.fn(async () => undefined),
+    getPendingMemory: vi.fn(async () => null),
+    savePendingMemory: vi.fn(async () => undefined),
+    clearPendingMemory: vi.fn(async () => undefined),
     ...overrides,
   };
 }
@@ -176,7 +179,7 @@ describe("handleUserMessage (AI-Driven)", () => {
         })
         .mockResolvedValue({ type: "text", text: "Sudah saya simpan ke Memory" }) as any
     });
-    const reply = await handleUserMessage(env, 123, config, { text: "Ingat makanan favorit saya nasi goreng" }, d);
+    const reply = await handleUserMessage(env, 123, config, { text: "Ingat bahwa makanan favorit saya nasi goreng" }, d);
     expect(d.upsertMemory).toHaveBeenCalledWith(config, { key: "Makanan favorit", value: "Nasi goreng", category: "Preference" });
     expect(reply).toContain("Memori 'Makanan favorit' sudah disimpan");
   });
@@ -513,5 +516,114 @@ describe("handleUserMessage (AI-Driven)", () => {
     const reply = await handleUserMessage(env, 123, config, { text: "Gagal terus" }, d);
     expect(reply).toContain("nge-lag");
     expect(reply).not.toContain("koneksi AI");
+  });
+
+  it("explicit ingat bahwa + create Identity upserts immediately without pending", async () => {
+    const d = deps({
+      generateChatReply: vi.fn()
+        .mockResolvedValueOnce({
+          type: "function_calls",
+          calls: [{ name: "create_notion_memory", args: { key: "Kuliah", value: "UNY", category: "Identity" } }],
+        })
+        .mockResolvedValue({ type: "text", text: "Ok" }) as any,
+    });
+    const reply = await handleUserMessage(env, 123, config, { text: "Ingat bahwa kuliah saya di UNY" }, d);
+    expect(d.upsertMemory).toHaveBeenCalledTimes(1);
+    expect(d.upsertMemory).toHaveBeenCalledWith(config, { key: "Kuliah", value: "UNY", category: "Identity" });
+    expect(d.savePendingMemory).not.toHaveBeenCalled();
+    expect(reply).toContain("Memori 'Kuliah' sudah disimpan");
+  });
+
+  it("inferred create_notion_memory saves pending and proposes confirm", async () => {
+    const d = deps({
+      generateChatReply: vi.fn()
+        .mockResolvedValueOnce({
+          type: "function_calls",
+          calls: [{ name: "create_notion_memory", args: { key: "Kuliah", value: "UNY", category: "Identity" } }],
+        })
+        .mockResolvedValue({ type: "text", text: "Ok" }) as any,
+    });
+    const reply = await handleUserMessage(env, 123, config, { text: "aku kuliah di UNY" }, d);
+    expect(d.upsertMemory).not.toHaveBeenCalled();
+    expect(d.savePendingMemory).toHaveBeenCalledWith(
+      env,
+      123,
+      expect.objectContaining({ key: "Kuliah", value: "UNY", category: "Identity" }),
+    );
+    expect(reply).toMatch(/ingat|ya|jangan/i);
+  });
+
+  it("pending memory + ya upserts pending fields and skips Gemini", async () => {
+    const d = deps({
+      getPendingMemory: vi.fn(async () => ({
+        key: "Kuliah",
+        value: "UNY",
+        category: "Identity" as const,
+        createdAt: Date.now(),
+      })),
+    });
+    const reply = await handleUserMessage(env, 123, config, { text: "ya" }, d);
+    expect(d.generateChatReply).not.toHaveBeenCalled();
+    expect(d.upsertMemory).toHaveBeenCalledWith(config, { key: "Kuliah", value: "UNY", category: "Identity" });
+    expect(d.clearPendingMemory).toHaveBeenCalledWith(env, 123);
+    expect(reply).toMatch(/ingat|simpan|memori|Kuliah|UNY/i);
+  });
+
+  it("pending memory + jangan clears without upsert", async () => {
+    const d = deps({
+      getPendingMemory: vi.fn(async () => ({
+        key: "Kuliah",
+        value: "UNY",
+        category: "Identity" as const,
+        createdAt: Date.now(),
+      })),
+    });
+    const reply = await handleUserMessage(env, 123, config, { text: "jangan" }, d);
+    expect(d.upsertMemory).not.toHaveBeenCalled();
+    expect(d.clearPendingMemory).toHaveBeenCalledWith(env, 123);
+    expect(d.generateChatReply).not.toHaveBeenCalled();
+    expect(reply).toMatch(/batal|ok|tidak/i);
+  });
+
+  it("Pattern + explicit ingat still requires confirm", async () => {
+    const d = deps({
+      generateChatReply: vi.fn()
+        .mockResolvedValueOnce({
+          type: "function_calls",
+          calls: [{ name: "create_notion_memory", args: { key: "Procrastinate", value: "sering menunda", category: "Pattern" } }],
+        })
+        .mockResolvedValue({ type: "text", text: "Ok" }) as any,
+    });
+    const reply = await handleUserMessage(env, 123, config, { text: "ingat bahwa saya sering menunda" }, d);
+    expect(d.upsertMemory).not.toHaveBeenCalled();
+    expect(d.savePendingMemory).toHaveBeenCalledWith(
+      env,
+      123,
+      expect.objectContaining({ key: "Procrastinate", value: "sering menunda", category: "Pattern" }),
+    );
+    expect(reply).toMatch(/ingat|ya|jangan/i);
+  });
+
+  it("pending delete wins over pending memory on ya", async () => {
+    const d = deps({
+      getPendingDelete: vi.fn(async () => ({
+        kind: "tasks" as const,
+        ids: ["task-1"],
+        summary: "A",
+        createdAt: Date.now(),
+      })),
+      getPendingMemory: vi.fn(async () => ({
+        key: "Kuliah",
+        value: "UNY",
+        category: "Identity" as const,
+        createdAt: Date.now(),
+      })),
+    });
+    const reply = await handleUserMessage(env, 123, config, { text: "ya" }, d);
+    expect(d.archiveTask).toHaveBeenCalledWith(config, "task-1");
+    expect(d.clearPendingDelete).toHaveBeenCalledWith(env, 123);
+    expect(d.upsertMemory).not.toHaveBeenCalled();
+    expect(d.clearPendingMemory).not.toHaveBeenCalled();
+    expect(reply).toMatch(/berhasil|hapus/i);
   });
 });

@@ -8,6 +8,7 @@ Youyou tracks **current** vs **previous** conversation topic so replies do not k
 |-----------|---------|
 | Depth | **C** Hybrid — KV topic state + prompt rules |
 | Detection | **C** Hybrid — explicit phrases in code + Gemini tool `set_conversation_topic` |
+| Scope chat | **DM only** — Context Manager v1 tidak jalan di grup WhatsApp (grup tetap ringan; topic-per-grup = fitur terpisah nanti) |
 | Deploy | Worker only |
 
 ## State (KV)

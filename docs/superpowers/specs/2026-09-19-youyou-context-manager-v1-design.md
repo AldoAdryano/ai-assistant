@@ -77,7 +77,7 @@ Message → Router
 - Multi-topic stack / nested contexts
 - Auto-link to Notion Projects DB
 - Full Context Manager in WhatsApp groups (groups stay light)
-- Proactive briefing (Task Intelligence — later)
+- Proactive briefing (→ `2026-09-19-youyou-task-intelligence-v1-design.md`)
 
 ## Success criteria
 1. After drone talk, user says buy kaos / “pindah topik belanja” → reply focuses on shopping, does not nag drone task.

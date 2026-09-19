@@ -40,6 +40,16 @@ function extractReply(data: any): ChatReply {
 // Removed interact
 
 
+const BRAIN_V1_RULES = [
+  "BRAIN V1 — INTENT & ACTION SAFETY (WAJIB sebelum memilih tool):",
+  "1. Klasifikasikan intent user dulu: task | inbox | memory | routine | chat | clarify.",
+  "2. Intent chat atau pertanyaan biasa → JANGAN panggil tool create Notion (task/note/memory/routine). Balas teks saja.",
+  "3. Beberapa pesan atau satu topik tanpa daftar tugas terpisah yang jelas → buat SATU task ATAU tanya 'satu atau beberapa?'; DILARANG spam create_notion_task.",
+  "4. Hapus massal / ALL / multi-delete → tanya konfirmasi dulu (sistem juga menegakkan ini).",
+  "5. Task + deadline jelas (policy B) → langsung create_notion_task tanpa menunda.",
+  "6. Parallel multi-tool HANYA untuk aksi berbeda yang user minta secara eksplisit — bukan multi-create spekulatif dari satu topik.",
+].join(" ");
+
 const GROUP_CHAT_RULES = [
   "MODE OBROLAN GRUP (WAJIB — utamakan aturan ini di atas instruksi 'asisten pribadi'):",
   "Kamu ikut ngobrol di grup WhatsApp. Tetap cerewet/tsundere.",
@@ -74,6 +84,7 @@ export async function generateChatReply(
     `Waktu saat ini (WIB): ${todayStr}`,
     YOUYOU_PERSONA,
     ...(isGroup ? [GROUP_CHAT_RULES] : [
+      BRAIN_V1_RULES,
       "You are an intelligent task management AI.",
       "CRITICAL: If the user mentions a task or intent that lacks a specific due date, and you ask a clarification question (such as asking for the day or date), when the user replies with that time/date detail, you MUST immediately combine it with the pending task context and invoke the appropriate tool (e.g., create_notion_task). Do not just respond with conversational text if a clear tool action can now be completed.",
       "Use supplied tasks and explicit memory when relevant.",
@@ -86,7 +97,7 @@ export async function generateChatReply(
       "1. CREATING: If the context of the conversation is about a NEW task (e.g., the user just mentioned a new homework, or you just asked a clarifying question about a NEW task and the user answered), you MUST use `create_notion_task`.",
       "2. UPDATING: ONLY use `update_notion_task` if the user EXPLICITLY asks to change, move, or modify an ALREADY EXISTING task. Do NOT hallucinate or reuse a `taskId` for a new task. If the user wants to update a task but you don't know the ID, use `read_notion_tasks` first to find it.",
       "3. DELETING: Use `delete_notion_tasks` to archive or delete tasks.",
-      "PARALLEL EXECUTION: If the user requests multiple distinct actions in a single prompt (e.g., delete a task AND create a note), you MUST output MULTIPLE function calls simultaneously in your single response. Do not limit yourself to one function call.",
+      "PARALLEL EXECUTION: If the user requests multiple clearly distinct actions in a single prompt (e.g., delete a task AND create a note), you MAY output MULTIPLE function calls simultaneously. Do NOT emit multiple create_notion_task calls for one topic unless the user explicitly listed multiple separate tasks.",
       "PARAMETER EXTRACTION RULES:",
       "When executing a tool call after a multi-turn clarification (e.g., creating a task after asking for a due date), you MUST look back at the conversation history to extract the ACTUAL task subject/title from the user's initial message.",
       "CRITICAL: NEVER use generic placeholder titles like 'Tugas baru', 'New Task', or 'Tugas'. If the user originally said 'Tugas matkul psikologi...', the `title` parameter MUST capture that exact intent. Do not be lazy.",

@@ -1359,4 +1359,400 @@ describe("handleUserMessage (AI-Driven)", () => {
       expect(reply).toMatch(/berhasil|diperbarui|diubah/i);
     });
   });
+
+  describe("Goals CRUD", () => {
+    const goalsConfig = {
+      notionGoalsDataSourceId: "goals-ds",
+      notionProjectsDataSourceId: "projects-ds",
+    } as AppConfig;
+
+    const sampleGoals = [
+      { id: "goal-iot", name: "Menguasai Embedded + IoT" },
+      { id: "goal-inc", name: "Dapat income pertama dari skill" },
+    ];
+
+    const sampleProjects = [
+      { id: "proj-ikn", name: "Persiapan IKN" },
+      { id: "proj-port", name: "Portfolio" },
+    ];
+
+    it("create_notion_goal creates when name is unique", async () => {
+      const d = deps({
+        listGoals: vi.fn(async () => sampleGoals),
+        createGoal: vi.fn(async () => "goal-new"),
+        generateChatReply: vi.fn()
+          .mockResolvedValueOnce({
+            type: "function_calls",
+            calls: [{
+              name: "create_notion_goal",
+              args: {
+                name: "Belajar Rust",
+                area: "Belajar",
+                metric: "1 project",
+                progress: 0,
+                status: "Not started",
+              },
+            }],
+          })
+          .mockResolvedValue({ type: "text", text: "ok" }) as any,
+      });
+      const reply = await handleUserMessage(
+        env,
+        123,
+        goalsConfig,
+        { text: "buat goal Belajar Rust" },
+        d,
+      );
+      expect(d.createGoal).toHaveBeenCalledWith(goalsConfig, {
+        name: "Belajar Rust",
+        area: "Belajar",
+        metric: "1 project",
+        progress: 0,
+        status: "Not started",
+      });
+      expect(reply).toMatch(/Belajar Rust/i);
+      expect(reply).toMatch(/sudah|berhasil|dibuat/i);
+    });
+
+    it("create_notion_goal rejects exact duplicate name", async () => {
+      const d = deps({
+        listGoals: vi.fn(async () => sampleGoals),
+        createGoal: vi.fn(async () => "goal-new"),
+        generateChatReply: vi.fn()
+          .mockResolvedValueOnce({
+            type: "function_calls",
+            calls: [{
+              name: "create_notion_goal",
+              args: { name: "menguasai embedded + iot" },
+            }],
+          })
+          .mockResolvedValue({ type: "text", text: "ok" }) as any,
+      });
+      const reply = await handleUserMessage(
+        env,
+        123,
+        goalsConfig,
+        { text: "buat goal menguasai embedded + iot" },
+        d,
+      );
+      expect(d.createGoal).not.toHaveBeenCalled();
+      expect(reply).toMatch(/sudah ada/i);
+      expect(reply).toMatch(/Menguasai Embedded \+ IoT/i);
+    });
+
+    it("create_notion_goal soft-disables when goals not configured", async () => {
+      const disabledConfig = {
+        notionGoalsDataSourceId: null,
+        notionProjectsDataSourceId: "projects-ds",
+      } as AppConfig;
+      const d = deps({
+        createGoal: vi.fn(async () => "goal-new"),
+        generateChatReply: vi.fn()
+          .mockResolvedValueOnce({
+            type: "function_calls",
+            calls: [{
+              name: "create_notion_goal",
+              args: { name: "Belajar Rust" },
+            }],
+          })
+          .mockResolvedValue({ type: "text", text: "ok" }) as any,
+      });
+      const reply = await handleUserMessage(
+        env,
+        123,
+        disabledConfig,
+        { text: "buat goal Belajar Rust" },
+        d,
+      );
+      expect(d.createGoal).not.toHaveBeenCalled();
+      expect(d.listGoals).not.toHaveBeenCalled();
+      expect(reply).toContain("Goals belum dikonfigurasi.");
+    });
+
+    it("passes goalsEnabled and goals into generateChatReply", async () => {
+      const d = deps({
+        listGoals: vi.fn(async () => sampleGoals),
+        generateChatReply: vi.fn(async (_c, _m, ctx) => {
+          expect(ctx.goalsEnabled).toBe(true);
+          expect(ctx.goals).toEqual(sampleGoals);
+          expect(ctx.projectsEnabled).toBe(true);
+          return { type: "text", text: "Hai" };
+        }) as any,
+      });
+      await handleUserMessage(env, 123, goalsConfig, { text: "Halo" }, d);
+      expect(d.listGoals).toHaveBeenCalledWith(goalsConfig);
+    });
+
+    it("passes goalsEnabled false when goals data source unset", async () => {
+      const disabledConfig = {
+        notionGoalsDataSourceId: null,
+        notionProjectsDataSourceId: "projects-ds",
+      } as AppConfig;
+      const d = deps({
+        listProjects: vi.fn(async () => sampleProjects),
+        generateChatReply: vi.fn(async (_c, _m, ctx) => {
+          expect(ctx.goalsEnabled).toBe(false);
+          expect(ctx.projectsEnabled).toBe(true);
+          return { type: "text", text: "Hai" };
+        }) as any,
+      });
+      await handleUserMessage(env, 123, disabledConfig, { text: "Halo" }, d);
+      expect(d.listGoals).not.toHaveBeenCalled();
+    });
+
+    it("update_notion_goal patches matched goal", async () => {
+      const d = deps({
+        listGoals: vi.fn(async () => sampleGoals),
+        updateGoal: vi.fn(async () => undefined),
+        generateChatReply: vi.fn()
+          .mockResolvedValueOnce({
+            type: "function_calls",
+            calls: [{
+              name: "update_notion_goal",
+              args: {
+                goal: "Menguasai Embedded + IoT",
+                progress: 10,
+                status: "In progress",
+              },
+            }],
+          })
+          .mockResolvedValue({ type: "text", text: "ok" }) as any,
+      });
+      const reply = await handleUserMessage(
+        env,
+        123,
+        goalsConfig,
+        { text: "ubah progress goal Menguasai Embedded + IoT jadi 10" },
+        d,
+      );
+      expect(d.updateGoal).toHaveBeenCalledWith(goalsConfig, "goal-iot", {
+        progress: 10,
+        status: "In progress",
+      });
+      expect(reply).toMatch(/berhasil|diperbarui|diubah/i);
+    });
+
+    it("update_notion_goal clarifies when goal unknown", async () => {
+      const d = deps({
+        listGoals: vi.fn(async () => sampleGoals),
+        updateGoal: vi.fn(async () => undefined),
+        generateChatReply: vi.fn()
+          .mockResolvedValueOnce({
+            type: "function_calls",
+            calls: [{
+              name: "update_notion_goal",
+              args: { goal: "Finance", progress: 5 },
+            }],
+          })
+          .mockResolvedValue({ type: "text", text: "ok" }) as any,
+      });
+      const reply = await handleUserMessage(
+        env,
+        123,
+        goalsConfig,
+        { text: "ubah goal Finance" },
+        d,
+      );
+      expect(d.updateGoal).not.toHaveBeenCalled();
+      expect(reply).toMatch(/tidak cocok|tidak ketemu|tidak ada/i);
+    });
+
+    it("delete_notion_goal saves pending delete and asks confirm", async () => {
+      const d = deps({
+        listGoals: vi.fn(async () => sampleGoals),
+        generateChatReply: vi.fn()
+          .mockResolvedValueOnce({
+            type: "function_calls",
+            calls: [{
+              name: "delete_notion_goal",
+              args: { goal: "Dapat income pertama dari skill" },
+            }],
+          })
+          .mockResolvedValue({ type: "text", text: "ok" }) as any,
+      });
+      const reply = await handleUserMessage(
+        env,
+        123,
+        goalsConfig,
+        { text: "hapus goal Dapat income pertama dari skill" },
+        d,
+      );
+      expect(d.archiveGoal).not.toHaveBeenCalled();
+      expect(d.savePendingDelete).toHaveBeenCalledWith(
+        env,
+        123,
+        expect.objectContaining({
+          kind: "goal",
+          ids: ["goal-inc"],
+          summary: "Dapat income pertama dari skill",
+        }),
+      );
+      expect(reply).toContain(
+        'Aldo, yakin hapus goal Dapat income pertama dari skill? Project di bawahnya tidak ikut terhapus. Balas "ya" atau "jangan".',
+      );
+    });
+
+    it("confirm ya after delete_notion_goal archives via archiveGoal", async () => {
+      const d = deps({
+        listGoals: vi.fn(async () => sampleGoals),
+        getPendingDelete: vi.fn(async () => ({
+          kind: "goal" as const,
+          ids: ["goal-inc"],
+          summary: "Dapat income pertama dari skill",
+          createdAt: Date.now(),
+        })),
+      });
+      const reply = await handleUserMessage(env, 123, goalsConfig, { text: "ya" }, d);
+      expect(d.archiveGoal).toHaveBeenCalledWith(goalsConfig, "goal-inc");
+      expect(d.archiveProject).not.toHaveBeenCalled();
+      expect(reply).toMatch(/berhasil menghapus 1 goal/i);
+    });
+
+    it("create_notion_project with goal sets goalId", async () => {
+      const d = deps({
+        listProjects: vi.fn(async () => sampleProjects),
+        listGoals: vi.fn(async () => sampleGoals),
+        createProject: vi.fn(async () => "proj-esp"),
+        generateChatReply: vi.fn()
+          .mockResolvedValueOnce({
+            type: "function_calls",
+            calls: [{
+              name: "create_notion_project",
+              args: {
+                name: "Portfolio ESP32",
+                goal: "Menguasai Embedded + IoT",
+              },
+            }],
+          })
+          .mockResolvedValue({ type: "text", text: "ok" }) as any,
+      });
+      const reply = await handleUserMessage(
+        env,
+        123,
+        goalsConfig,
+        { text: "buat project Portfolio ESP32 untuk goal Menguasai Embedded + IoT" },
+        d,
+      );
+      expect(d.createProject).toHaveBeenCalledWith(goalsConfig, {
+        name: "Portfolio ESP32",
+        goalId: "goal-iot",
+      });
+      expect(reply).toMatch(/Portfolio ESP32/i);
+      expect(reply).toMatch(/sudah|berhasil|dibuat/i);
+    });
+
+    it("create_notion_project with goal soft-disables when goals not configured", async () => {
+      const noGoalsConfig = {
+        notionGoalsDataSourceId: null,
+        notionProjectsDataSourceId: "projects-ds",
+      } as AppConfig;
+      const d = deps({
+        listProjects: vi.fn(async () => sampleProjects),
+        createProject: vi.fn(async () => "proj-esp"),
+        generateChatReply: vi.fn()
+          .mockResolvedValueOnce({
+            type: "function_calls",
+            calls: [{
+              name: "create_notion_project",
+              args: {
+                name: "Portfolio ESP32",
+                goal: "Menguasai Embedded + IoT",
+              },
+            }],
+          })
+          .mockResolvedValue({ type: "text", text: "ok" }) as any,
+      });
+      const reply = await handleUserMessage(
+        env,
+        123,
+        noGoalsConfig,
+        { text: "buat project Portfolio ESP32 untuk goal X" },
+        d,
+      );
+      expect(d.createProject).not.toHaveBeenCalled();
+      expect(reply).toContain("Goals belum dikonfigurasi.");
+    });
+
+    it("update_notion_project with goal sets goalId", async () => {
+      const d = deps({
+        listProjects: vi.fn(async () => sampleProjects),
+        listGoals: vi.fn(async () => sampleGoals),
+        updateProject: vi.fn(async () => undefined),
+        generateChatReply: vi.fn()
+          .mockResolvedValueOnce({
+            type: "function_calls",
+            calls: [{
+              name: "update_notion_project",
+              args: {
+                project: "Portfolio",
+                goal: "Menguasai Embedded + IoT",
+              },
+            }],
+          })
+          .mockResolvedValue({ type: "text", text: "ok" }) as any,
+      });
+      const reply = await handleUserMessage(
+        env,
+        123,
+        goalsConfig,
+        { text: "tautkan project Portfolio ke goal Menguasai Embedded + IoT" },
+        d,
+      );
+      expect(d.updateProject).toHaveBeenCalledWith(goalsConfig, "proj-port", {
+        goalId: "goal-iot",
+      });
+      expect(reply).toMatch(/berhasil|diperbarui|diubah/i);
+    });
+
+    it("projects CRUD still works without goals configured", async () => {
+      const projectsOnlyConfig = {
+        notionGoalsDataSourceId: null,
+        notionProjectsDataSourceId: "projects-ds",
+      } as AppConfig;
+      const d = deps({
+        listProjects: vi.fn(async () => sampleProjects),
+        createProject: vi.fn(async () => "proj-new"),
+        generateChatReply: vi.fn()
+          .mockResolvedValueOnce({
+            type: "function_calls",
+            calls: [{
+              name: "create_notion_project",
+              args: { name: "Liburan Mars", area: "Belajar" },
+            }],
+          })
+          .mockResolvedValue({ type: "text", text: "ok" }) as any,
+      });
+      const reply = await handleUserMessage(
+        env,
+        123,
+        projectsOnlyConfig,
+        { text: "buat project Liburan Mars" },
+        d,
+      );
+      expect(d.createProject).toHaveBeenCalledWith(projectsOnlyConfig, {
+        name: "Liburan Mars",
+        area: "Belajar",
+      });
+      expect(d.listGoals).not.toHaveBeenCalled();
+      expect(reply).toMatch(/Liburan Mars/i);
+      expect(reply).toMatch(/sudah|berhasil|dibuat/i);
+    });
+
+    it("listGoals soft-fails like listProjects (continues without goals)", async () => {
+      const d = deps({
+        listGoals: vi.fn(async () => {
+          throw new Error("Notion goals down");
+        }),
+        listProjects: vi.fn(async () => sampleProjects),
+        generateChatReply: vi.fn(async (_c, _m, ctx) => {
+          expect(ctx.goalsEnabled).toBe(true);
+          expect(ctx.goals).toEqual([]);
+          return { type: "text", text: "Hai" };
+        }) as any,
+      });
+      const reply = await handleUserMessage(env, 123, goalsConfig, { text: "Halo" }, d);
+      expect(reply).toBe("Hai");
+      expect(d.listGoals).toHaveBeenCalled();
+    });
+  });
 });

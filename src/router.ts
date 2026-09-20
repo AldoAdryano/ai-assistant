@@ -34,7 +34,8 @@ import type { PendingDelete, PendingMemory } from "./action-safety";
 import { applyTopicSwitch, detectExplicitTopicSwitch, type ConversationContext } from "./conversation-context";
 import { parseIndonesianDeadline, parseIndonesianNaturalDate } from "./date";
 import { extractProjectMention, findExactProject, matchProject } from "./project-match";
-import type { AppConfig, Env, ProjectRecord } from "./types";
+import { findExactGoal, matchGoal } from "./goal-match";
+import type { AppConfig, Env, GoalRecord, ProjectRecord } from "./types";
 
 export function sanitizeMarkdown(text: string): string {
   return text.replace(/\*\*([^*]+)\*\*/g, "*$1*");
@@ -179,9 +180,12 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
     const projectsEnabled = Boolean(config.notionProjectsDataSourceId);
     let projects: ProjectRecord[] = [];
     let projectsLoaded = false;
+    const goalsEnabled = Boolean(config.notionGoalsDataSourceId);
+    let goals: GoalRecord[] = [];
+    let goalsLoaded = false;
 
-    const [tasks, memories, previousInteractionId, chatLog, loadedProjects] = isGroup
-      ? [[], [], null as string | null, await deps.getChatLog(env, userId), [] as ProjectRecord[]]
+    const [tasks, memories, previousInteractionId, chatLog, loadedProjects, loadedGoals] = isGroup
+      ? [[], [], null as string | null, await deps.getChatLog(env, userId), [] as ProjectRecord[], [] as GoalRecord[]]
       : await Promise.all([
           deps.listActiveTasks(config),
           deps.listMemoryContext(config),
@@ -193,10 +197,20 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
                 return [] as ProjectRecord[];
               })
             : Promise.resolve([] as ProjectRecord[]),
+          goalsEnabled
+            ? deps.listGoals(config).catch((err) => {
+                console.error("listGoals failed (continuing without goals)", err);
+                return [] as GoalRecord[];
+              })
+            : Promise.resolve([] as GoalRecord[]),
         ]);
     if (projectsEnabled) {
       projects = loadedProjects;
       projectsLoaded = true;
+    }
+    if (goalsEnabled) {
+      goals = loadedGoals;
+      goalsLoaded = true;
     }
 
     const ensureProjects = async (): Promise<ProjectRecord[]> => {
@@ -206,6 +220,15 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
         projectsLoaded = true;
       }
       return projects;
+    };
+
+    const ensureGoals = async (): Promise<GoalRecord[]> => {
+      if (!goalsEnabled) return [];
+      if (!goalsLoaded) {
+        goals = await deps.listGoals(config);
+        goalsLoaded = true;
+      }
+      return goals;
     };
 
     let currentLog = chatLog ? chatLog + "\nUser: " + payload.text : "User: " + payload.text;
@@ -246,6 +269,8 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
               memories,
               ...(projectsEnabled && !isGroup ? { projects } : {}),
               projectsEnabled: projectsEnabled && !isGroup,
+              ...(goalsEnabled && !isGroup ? { goals } : {}),
+              goalsEnabled: goalsEnabled && !isGroup,
               chatContext: isGroup ? "group" : "dm",
               conversation: isGroup ? null : conversationContext,
             },
@@ -468,6 +493,31 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
                   replyMessages.push("Nama project belum diisi.");
                   break;
                 }
+                const goalArg = typeof call.args.goal === "string" ? call.args.goal.trim() : "";
+                let goalId: string | undefined;
+                if (goalArg) {
+                  if (!goalsEnabled) {
+                    replyMessages.push("Goals belum dikonfigurasi.");
+                    break;
+                  }
+                  const knownGoals = await ensureGoals();
+                  const matchedGoal = matchGoal(goalArg, knownGoals);
+                  if (matchedGoal.kind === "none") {
+                    const names = knownGoals.slice(0, 5).map((g) => g.name).join(", ");
+                    replyMessages.push(
+                      `Goal tidak cocok. Goal yang ada: ${names}. Sebut goal yang mana.`,
+                    );
+                    break;
+                  }
+                  if (matchedGoal.kind === "ambiguous") {
+                    const names = matchedGoal.candidates.map((g) => g.name).join(", ");
+                    replyMessages.push(
+                      `Beberapa goal cocok (${names}). Sebut goal yang mana.`,
+                    );
+                    break;
+                  }
+                  goalId = matchedGoal.goal.id;
+                }
                 // Dedicated re-fetch for dup-check — do not trust soft-failed empty cache
                 let knownProjects: ProjectRecord[];
                 try {
@@ -495,10 +545,11 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
                   name,
                   ...(area ? { area } : {}),
                   ...(deadline ? { deadline } : {}),
+                  ...(goalId ? { goalId } : {}),
                 });
                 projects = [
                   ...knownProjects,
-                  { id: createdId, name, ...(area ? { area } : {}) },
+                  { id: createdId, name, ...(area ? { area } : {}), ...(goalId ? { goalId } : {}) },
                 ];
                 projectsLoaded = true;
                 replyMessages.push(`Project '${name}' sudah dibuat.`);
@@ -526,6 +577,31 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
                   );
                   break;
                 }
+                const goalArg = typeof call.args.goal === "string" ? call.args.goal.trim() : "";
+                let goalId: string | undefined;
+                if (goalArg) {
+                  if (!goalsEnabled) {
+                    replyMessages.push("Goals belum dikonfigurasi.");
+                    break;
+                  }
+                  const knownGoals = await ensureGoals();
+                  const matchedGoal = matchGoal(goalArg, knownGoals);
+                  if (matchedGoal.kind === "none") {
+                    const names = knownGoals.slice(0, 5).map((g) => g.name).join(", ");
+                    replyMessages.push(
+                      `Goal tidak cocok. Goal yang ada: ${names}. Sebut goal yang mana.`,
+                    );
+                    break;
+                  }
+                  if (matchedGoal.kind === "ambiguous") {
+                    const names = matchedGoal.candidates.map((g) => g.name).join(", ");
+                    replyMessages.push(
+                      `Beberapa goal cocok (${names}). Sebut goal yang mana.`,
+                    );
+                    break;
+                  }
+                  goalId = matchedGoal.goal.id;
+                }
                 const newName = typeof call.args.new_name === "string" ? call.args.new_name.trim() : "";
                 const area = typeof call.args.area === "string" ? call.args.area.trim() : "";
                 let deadline = typeof call.args.deadline === "string" ? call.args.deadline.trim() : "";
@@ -533,10 +609,11 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
                   const naturalParsed = deps.parseIndonesianNaturalDate(deadline, new Date());
                   if (naturalParsed) deadline = naturalParsed;
                 }
-                const update: { name?: string; area?: string; deadline?: string } = {};
+                const update: { name?: string; area?: string; deadline?: string; goalId?: string } = {};
                 if (newName) update.name = newName;
                 if (area) update.area = area;
                 if (deadline) update.deadline = deadline;
+                if (goalId) update.goalId = goalId;
                 await deps.updateProject(config, matched.project.id, update);
                 replyMessages.push(`Project '${matched.project.name}' berhasil diperbarui.`);
                 break;
@@ -572,6 +649,160 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
                 pendingDeleteSavedThisTurn = true;
                 replyMessages.push(
                   `Aldo, yakin hapus project ${matched.project.name}? Task di dalamnya tidak ikut terhapus. Balas "ya" atau "jangan".`,
+                );
+                break;
+              }
+              case "create_notion_goal": {
+                if (!goalsEnabled) {
+                  replyMessages.push("Goals belum dikonfigurasi.");
+                  break;
+                }
+                const name = typeof call.args.name === "string" ? call.args.name.trim() : "";
+                if (!name) {
+                  replyMessages.push("Nama goal belum diisi.");
+                  break;
+                }
+                let knownGoals: GoalRecord[];
+                try {
+                  knownGoals = await deps.listGoals(config);
+                  goals = knownGoals;
+                  goalsLoaded = true;
+                } catch (err) {
+                  console.error("listGoals failed during create_notion_goal dup-check", err);
+                  replyMessages.push("Gagal cek goal yang ada. Coba lagi sebentar.");
+                  break;
+                }
+                if (findExactGoal(name, knownGoals)) {
+                  replyMessages.push(
+                    `Goal '${name}' sudah ada. Pakai itu atau pilih nama lain.`,
+                  );
+                  break;
+                }
+                const area = typeof call.args.area === "string" ? call.args.area.trim() : "";
+                const metric = typeof call.args.metric === "string" ? call.args.metric.trim() : "";
+                const status = typeof call.args.status === "string" ? call.args.status.trim() : "";
+                let target_date = typeof call.args.target_date === "string" ? call.args.target_date.trim() : "";
+                if (target_date) {
+                  const naturalParsed = deps.parseIndonesianNaturalDate(target_date, new Date());
+                  if (naturalParsed) target_date = naturalParsed;
+                }
+                const notes = typeof call.args.notes === "string" ? call.args.notes.trim() : "";
+                let progress: string | number | undefined;
+                if (typeof call.args.progress === "number" && Number.isFinite(call.args.progress)) {
+                  progress = call.args.progress;
+                } else if (typeof call.args.progress === "string" && call.args.progress.trim()) {
+                  const raw = call.args.progress.trim();
+                  const n = Number(raw);
+                  progress = Number.isFinite(n) ? n : raw;
+                }
+                const createdId = await deps.createGoal(config, {
+                  name,
+                  ...(area ? { area } : {}),
+                  ...(metric ? { metric } : {}),
+                  ...(progress !== undefined ? { progress } : {}),
+                  ...(status ? { status } : {}),
+                  ...(target_date ? { target_date } : {}),
+                  ...(notes ? { notes } : {}),
+                });
+                goals = [
+                  ...knownGoals,
+                  { id: createdId, name, ...(area ? { area } : {}), ...(status ? { status } : {}) },
+                ];
+                goalsLoaded = true;
+                replyMessages.push(`Goal '${name}' sudah dibuat.`);
+                break;
+              }
+              case "update_notion_goal": {
+                if (!goalsEnabled) {
+                  replyMessages.push("Goals belum dikonfigurasi.");
+                  break;
+                }
+                const query = typeof call.args.goal === "string" ? call.args.goal.trim() : "";
+                const knownGoals = await ensureGoals();
+                const matched = matchGoal(query, knownGoals);
+                if (matched.kind === "none") {
+                  const names = knownGoals.slice(0, 5).map((g) => g.name).join(", ");
+                  replyMessages.push(
+                    `Goal tidak cocok. Goal yang ada: ${names}. Sebut goal yang mana.`,
+                  );
+                  break;
+                }
+                if (matched.kind === "ambiguous") {
+                  const names = matched.candidates.map((g) => g.name).join(", ");
+                  replyMessages.push(
+                    `Beberapa goal cocok (${names}). Sebut goal yang mana.`,
+                  );
+                  break;
+                }
+                const newName = typeof call.args.new_name === "string" ? call.args.new_name.trim() : "";
+                const area = typeof call.args.area === "string" ? call.args.area.trim() : "";
+                const metric = typeof call.args.metric === "string" ? call.args.metric.trim() : "";
+                const status = typeof call.args.status === "string" ? call.args.status.trim() : "";
+                let target_date = typeof call.args.target_date === "string" ? call.args.target_date.trim() : "";
+                if (target_date) {
+                  const naturalParsed = deps.parseIndonesianNaturalDate(target_date, new Date());
+                  if (naturalParsed) target_date = naturalParsed;
+                }
+                const notes = typeof call.args.notes === "string" ? call.args.notes.trim() : "";
+                let progress: string | number | undefined;
+                if (typeof call.args.progress === "number" && Number.isFinite(call.args.progress)) {
+                  progress = call.args.progress;
+                } else if (typeof call.args.progress === "string" && call.args.progress.trim()) {
+                  const raw = call.args.progress.trim();
+                  const n = Number(raw);
+                  progress = Number.isFinite(n) ? n : raw;
+                }
+                const update: {
+                  name?: string;
+                  area?: string;
+                  metric?: string;
+                  progress?: string | number;
+                  status?: string;
+                  target_date?: string;
+                  notes?: string;
+                } = {};
+                if (newName) update.name = newName;
+                if (area) update.area = area;
+                if (metric) update.metric = metric;
+                if (progress !== undefined) update.progress = progress;
+                if (status) update.status = status;
+                if (target_date) update.target_date = target_date;
+                if (notes) update.notes = notes;
+                await deps.updateGoal(config, matched.goal.id, update);
+                replyMessages.push(`Goal '${matched.goal.name}' berhasil diperbarui.`);
+                break;
+              }
+              case "delete_notion_goal": {
+                if (!goalsEnabled) {
+                  replyMessages.push("Goals belum dikonfigurasi.");
+                  break;
+                }
+                const query = typeof call.args.goal === "string" ? call.args.goal.trim() : "";
+                const knownGoals = await ensureGoals();
+                const matched = matchGoal(query, knownGoals);
+                if (matched.kind === "none") {
+                  const names = knownGoals.slice(0, 5).map((g) => g.name).join(", ");
+                  replyMessages.push(
+                    `Goal tidak cocok. Goal yang ada: ${names}. Sebut goal yang mana.`,
+                  );
+                  break;
+                }
+                if (matched.kind === "ambiguous") {
+                  const names = matched.candidates.map((g) => g.name).join(", ");
+                  replyMessages.push(
+                    `Beberapa goal cocok (${names}). Sebut goal yang mana.`,
+                  );
+                  break;
+                }
+                await deps.savePendingDelete(env, userId, {
+                  kind: "goal",
+                  ids: [matched.goal.id],
+                  summary: matched.goal.name,
+                  createdAt: Date.now(),
+                });
+                pendingDeleteSavedThisTurn = true;
+                replyMessages.push(
+                  `Aldo, yakin hapus goal ${matched.goal.name}? Project di bawahnya tidak ikut terhapus. Balas "ya" atau "jangan".`,
                 );
                 break;
               }

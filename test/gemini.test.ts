@@ -245,6 +245,24 @@ it("includes Projects CRUD tools when projectsEnabled and not group", async () =
   expect(toolNames).toContain("create_notion_project");
   expect(toolNames).toContain("update_notion_project");
   expect(toolNames).toContain("delete_notion_project");
+  expect(toolNames).toContain("list_notion_projects");
+  expect(toolNames).toContain("get_project_status");
+
+  const listProjects = requestBody.tools[0].functionDeclarations.find(
+    (t: { name: string }) => t.name === "list_notion_projects",
+  );
+  expect(listProjects.parameters.required).toEqual([]);
+  expect(listProjects.parameters.properties).toEqual({});
+  expect(listProjects.description).toMatch(/daftar|list project/i);
+
+  const projectStatus = requestBody.tools[0].functionDeclarations.find(
+    (t: { name: string }) => t.name === "get_project_status",
+  );
+  expect(projectStatus.parameters.required).toEqual(["project"]);
+  expect(projectStatus.parameters.properties).toMatchObject({
+    project: { type: "STRING" },
+  });
+  expect(projectStatus.description).toMatch(/status|progress|Do not invent/i);
 
   const create = requestBody.tools[0].functionDeclarations.find(
     (t: { name: string }) => t.name === "create_notion_project",
@@ -281,6 +299,9 @@ it("includes Projects CRUD tools when projectsEnabled and not group", async () =
   expect(systemText).toMatch(/LIFE OS Projects/i);
   expect(systemText).toMatch(/delete_notion_project|konfirmasi|confirm/i);
   expect(systemText).toMatch(/LIFE OS Goals|Memory category.*Goal/i);
+  expect(systemText).toMatch(/list_notion_projects/);
+  expect(systemText).toMatch(/get_project_status/);
+  expect(systemText).toMatch(/do not invent|jangan mengarang/i);
 });
 
 it("includes Goals CRUD tools when goalsEnabled and not group", async () => {
@@ -398,6 +419,8 @@ it("omits Projects CRUD tools when projectsEnabled is false or absent", async ()
   expect(toolNames).not.toContain("create_notion_project");
   expect(toolNames).not.toContain("update_notion_project");
   expect(toolNames).not.toContain("delete_notion_project");
+  expect(toolNames).not.toContain("list_notion_projects");
+  expect(toolNames).not.toContain("get_project_status");
 });
 
 it("omits Projects CRUD tools in group even when projectsEnabled", async () => {

@@ -120,6 +120,7 @@ const PROJECTS_CRUD_RULES = [
   "2. create/update project boleh pass `goal` (nama/id LIFE OS Goals) jika Aldo menautkan project ke goal; jangan mengarang nama goal yang tidak ada di daftar Known LIFE OS goals.",
   "3. delete_notion_project: selalu panggil tool (sistem akan minta konfirmasi ya/jangan). Jangan arsip sendiri tanpa tool.",
   "4. Setelah create project berhasil, Aldo boleh menautkan task dengan create_notion_task + project=nama.",
+  "5. Untuk daftar/list project gunakan list_notion_projects; untuk status/progress/task di project X gunakan get_project_status. Sistem mengembalikan teks terformat — do not invent project/task lists.",
 ].join(" ");
 
 const GOALS_CRUD_RULES = [
@@ -417,6 +418,24 @@ export async function generateChatReply(
             type: "OBJECT",
             properties: {
               project: { type: "STRING", description: "Project name or id to archive after user confirms." },
+            },
+            required: ["project"]
+          }
+        },
+        {
+          type: "function",
+          name: "list_notion_projects",
+          description: "Lists LIFE OS Projects (name, area, status, goal, deadline). Use when Aldo asks daftar/list project.",
+          parameters: { type: "OBJECT", properties: {}, required: [] }
+        },
+        {
+          type: "function",
+          name: "get_project_status",
+          description: "Status of one LIFE OS Project plus its open tasks (To Do/Doing). Use for status/progress/task di project X. Do not invent tasks.",
+          parameters: {
+            type: "OBJECT",
+            properties: {
+              project: { type: "STRING", description: "Project name or id to match." }
             },
             required: ["project"]
           }

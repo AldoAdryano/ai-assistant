@@ -249,6 +249,7 @@ it("includes Projects CRUD tools when projectsEnabled and not group", async () =
     name: { type: "STRING" },
     area: { type: "STRING" },
     deadline: { type: "STRING" },
+    goal: { type: "STRING" },
   });
 
   const update = requestBody.tools[0].functionDeclarations.find(
@@ -260,6 +261,7 @@ it("includes Projects CRUD tools when projectsEnabled and not group", async () =
     new_name: { type: "STRING" },
     area: { type: "STRING" },
     deadline: { type: "STRING" },
+    goal: { type: "STRING" },
   });
 
   const del = requestBody.tools[0].functionDeclarations.find(
@@ -273,7 +275,107 @@ it("includes Projects CRUD tools when projectsEnabled and not group", async () =
   const systemText = requestBody.systemInstruction.parts[0].text;
   expect(systemText).toMatch(/LIFE OS Projects/i);
   expect(systemText).toMatch(/delete_notion_project|konfirmasi|confirm/i);
-  expect(systemText).toMatch(/Goals|jangan.*Goal|do not invent Goals/i);
+  expect(systemText).toMatch(/LIFE OS Goals|Memory category.*Goal/i);
+});
+
+it("includes Goals CRUD tools when goalsEnabled and not group", async () => {
+  let requestBody: any;
+  const fakeFetch: typeof fetch = async (_input, init) => {
+    requestBody = JSON.parse(String(init?.body));
+    return interaction("Siap.");
+  };
+  await generateChatReply(config, { text: "Buat goal IoT" }, {
+    tasks: [],
+    memories: [],
+    goalsEnabled: true,
+    goals: [{ id: "goal-1", name: "Menguasai Embedded + IoT" }],
+  }, undefined, fakeFetch);
+
+  const toolNames = requestBody.tools[0].functionDeclarations.map((t: { name: string }) => t.name);
+  expect(toolNames).toContain("create_notion_goal");
+  expect(toolNames).toContain("update_notion_goal");
+  expect(toolNames).toContain("delete_notion_goal");
+
+  const create = requestBody.tools[0].functionDeclarations.find(
+    (t: { name: string }) => t.name === "create_notion_goal",
+  );
+  expect(create.parameters.required).toEqual(["name"]);
+  expect(create.parameters.properties).toMatchObject({
+    name: { type: "STRING" },
+    area: { type: "STRING" },
+    metric: { type: "STRING" },
+    progress: { type: "STRING" },
+    status: { type: "STRING" },
+    target_date: { type: "STRING" },
+    notes: { type: "STRING" },
+  });
+
+  const update = requestBody.tools[0].functionDeclarations.find(
+    (t: { name: string }) => t.name === "update_notion_goal",
+  );
+  expect(update.parameters.required).toEqual(["goal"]);
+  expect(update.parameters.properties).toMatchObject({
+    goal: { type: "STRING" },
+    new_name: { type: "STRING" },
+    area: { type: "STRING" },
+    metric: { type: "STRING" },
+    progress: { type: "STRING" },
+    status: { type: "STRING" },
+    target_date: { type: "STRING" },
+    notes: { type: "STRING" },
+  });
+
+  const del = requestBody.tools[0].functionDeclarations.find(
+    (t: { name: string }) => t.name === "delete_notion_goal",
+  );
+  expect(del.parameters.required).toEqual(["goal"]);
+  expect(del.parameters.properties).toMatchObject({
+    goal: { type: "STRING" },
+  });
+
+  const systemText = requestBody.systemInstruction.parts[0].text;
+  expect(systemText).toContain("Known LIFE OS goals");
+  expect(systemText).toContain("Menguasai Embedded + IoT");
+  expect(systemText).toContain("id: goal-1");
+  expect(systemText).toMatch(/LIFE OS Goals/i);
+  expect(systemText).toMatch(/Memory category.*Goal|berbeda|different stores/i);
+  expect(systemText).toMatch(/delete_notion_goal|ya\/jangan|konfirmasi/i);
+  expect(systemText).not.toMatch(/do not invent Goals/i);
+});
+
+it("omits Goals CRUD tools when goalsEnabled is false or absent", async () => {
+  let requestBody: any;
+  const fakeFetch: typeof fetch = async (_input, init) => {
+    requestBody = JSON.parse(String(init?.body));
+    return interaction("Siap.");
+  };
+  await generateChatReply(config, { text: "Buat goal IoT" }, {
+    tasks: [],
+    memories: [],
+  }, undefined, fakeFetch);
+
+  const toolNames = requestBody.tools[0].functionDeclarations.map((t: { name: string }) => t.name);
+  expect(toolNames).not.toContain("create_notion_goal");
+  expect(toolNames).not.toContain("update_notion_goal");
+  expect(toolNames).not.toContain("delete_notion_goal");
+  expect(requestBody.systemInstruction.parts[0].text).not.toContain("Known LIFE OS goals");
+});
+
+it("omits Goals CRUD tools in group even when goalsEnabled", async () => {
+  let requestBody: any;
+  const fakeFetch: typeof fetch = async (_input, init) => {
+    requestBody = JSON.parse(String(init?.body));
+    return interaction("Halo grup!");
+  };
+  await generateChatReply(config, { text: "Buat goal IoT" }, {
+    tasks: [],
+    memories: [],
+    chatContext: "group",
+    goalsEnabled: true,
+    goals: [{ id: "goal-1", name: "Menguasai Embedded + IoT" }],
+  }, undefined, fakeFetch);
+
+  expect(requestBody.tools).toBeUndefined();
 });
 
 it("omits Projects CRUD tools when projectsEnabled is false or absent", async () => {

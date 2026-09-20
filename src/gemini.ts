@@ -1,5 +1,5 @@
 import type { ConversationContext } from "./conversation-context";
-import type { AppConfig, MemoryCategory, MemoryRecord, ProjectRecord, TaskRecord, RoutineRecord } from "./types";
+import type { AppConfig, GoalRecord, MemoryCategory, MemoryRecord, ProjectRecord, TaskRecord, RoutineRecord } from "./types";
 import { nowWib, getWibTimeLabel } from "./date";
 import { emptyBriefingReply } from "./task-intelligence";
 
@@ -115,10 +115,18 @@ const GROUP_CHAT_RULES = [
 
 const PROJECTS_CRUD_RULES = [
   "PROJECTS CRUD — LIFE OS Projects (DM only when tools tersedia):",
-  "1. Gunakan create_notion_project / update_notion_project / delete_notion_project HANYA untuk database LIFE OS Projects — bukan Goals, bukan Tasks.",
-  "2. Do not invent Goals. Jangan membuat/mengubah Goals; Projects saja.",
+  "1. Gunakan create_notion_project / update_notion_project / delete_notion_project HANYA untuk database LIFE OS Projects — bukan Tasks, bukan Memory.",
+  "2. create/update project boleh pass `goal` (nama/id LIFE OS Goals) jika Aldo menautkan project ke goal; jangan mengarang nama goal yang tidak ada di daftar Known LIFE OS goals.",
   "3. delete_notion_project: selalu panggil tool (sistem akan minta konfirmasi ya/jangan). Jangan arsip sendiri tanpa tool.",
   "4. Setelah create project berhasil, Aldo boleh menautkan task dengan create_notion_task + project=nama.",
+].join(" ");
+
+const GOALS_CRUD_RULES = [
+  "GOALS CRUD — LIFE OS Goals (DM only when tools tersedia):",
+  "1. LIFE OS Goals tools (create/update/delete_notion_goal) untuk target terukur (Area/Metric/Progress). Memory category Goal tetap untuk fakta jangka panjang tentang Aldo — different stores; jangan campur.",
+  "2. Gunakan goal CRUD HANYA jika tools tersedia; do not invent goal names not in Known LIFE OS goals list.",
+  "3. create/update project may pass `goal` when user links a project to a goal.",
+  "4. delete_notion_goal: selalu panggil tool (sistem akan minta konfirmasi ya/jangan). Jangan arsip sendiri tanpa tool.",
 ].join(" ");
 
 function formatProjectsForPrompt(projects: ProjectRecord[]): string {
@@ -130,10 +138,28 @@ function formatProjectsForPrompt(projects: ProjectRecord[]): string {
   ].join("\n");
 }
 
+function formatGoalsForPrompt(goals: GoalRecord[]): string {
+  const lines = goals.map((g) => `- ${g.name} (id: ${g.id})`);
+  return [
+    "Known LIFE OS goals (use these names only; do not invent):",
+    ...lines,
+    "GOAL RULES: If Aldo says 'untuk/ke goal X' when creating/updating a project, pass goal=X. If unsure which listed goal → clarify in text. Omit `goal` if none / user did not link a goal.",
+  ].join("\n");
+}
+
 export async function generateChatReply(
   config: AppConfig,
   userMessage: { text: string; imageBase64?: string; audioBase64?: string },
-  context: { tasks: TaskRecord[]; memories: MemoryRecord[]; projects?: ProjectRecord[]; projectsEnabled?: boolean; chatContext?: "dm" | "group"; conversation?: ConversationContext | null },
+  context: {
+    tasks: TaskRecord[];
+    memories: MemoryRecord[];
+    projects?: ProjectRecord[];
+    projectsEnabled?: boolean;
+    goals?: GoalRecord[];
+    goalsEnabled?: boolean;
+    chatContext?: "dm" | "group";
+    conversation?: ConversationContext | null;
+  },
   previousInteractionId?: string | null,
   fetchImpl: typeof fetch = fetch,
 ): Promise<ChatReply> {
@@ -144,6 +170,9 @@ export async function generateChatReply(
   const memoryBlock = isGroup ? "- none" : formatMemoriesForPrompt(context.memories);
   const projectsBlock = !isGroup && context.projects?.length
     ? formatProjectsForPrompt(context.projects)
+    : null;
+  const goalsBlock = !isGroup && context.goals?.length
+    ? formatGoalsForPrompt(context.goals)
     : null;
   
   const now = nowWib();
@@ -178,7 +207,9 @@ export async function generateChatReply(
       "If the user asks to delete or update a specific task (e.g., \"hapus tugas baru\"), but you do NOT possess the exact Notion UUIDs in your immediate conversation history, YOU MUST NOT GUESS OR HALLUCINATE THEM.",
       "Instead, your FIRST action must be to call `read_notion_tasks` to search the database. Only after you have retrieved the correct UUIDs from the read action, you may proceed to use `delete_notion_tasks` or `update_notion_task`. If your environment does not support recursive tool calling, simply read the tasks for the user first and ask them to confirm which ones to delete.",
       ...(projectsBlock ? [projectsBlock] : []),
+      ...(goalsBlock ? [goalsBlock] : []),
       ...(context.projectsEnabled ? [PROJECTS_CRUD_RULES] : []),
+      ...(context.goalsEnabled ? [GOALS_CRUD_RULES] : []),
       "\nActive tasks:\n" + (taskLines.length ? taskLines.join("\n") : "- none"),
       "\nExplicit memory:\n" + memoryBlock,
     ]),
@@ -349,13 +380,14 @@ export async function generateChatReply(
         {
           type: "function",
           name: "create_notion_project",
-          description: "Creates a new page in LIFE OS Projects. Use when Aldo asks to buat/tambah project. Do not invent Goals.",
+          description: "Creates a new page in LIFE OS Projects. Use when Aldo asks to buat/tambah project. Optional goal links to a LIFE OS Goal (not Memory category Goal).",
           parameters: {
             type: "OBJECT",
             properties: {
               name: { type: "STRING", description: "Project title (property Project)." },
               area: { type: "STRING", description: "Optional Area (select/text name)." },
               deadline: { type: "STRING", description: "Optional deadline — natural language or ISO date." },
+              goal: { type: "STRING", description: "Optional LIFE OS Goal name or id to link. Omit if none / user did not link a goal." },
             },
             required: ["name"]
           }
@@ -363,7 +395,7 @@ export async function generateChatReply(
         {
           type: "function",
           name: "update_notion_project",
-          description: "Updates an existing LIFE OS Project (rename, area, deadline). Match by project name or id.",
+          description: "Updates an existing LIFE OS Project (rename, area, deadline, optional goal link). Match by project name or id.",
           parameters: {
             type: "OBJECT",
             properties: {
@@ -371,6 +403,7 @@ export async function generateChatReply(
               new_name: { type: "STRING", description: "Optional new project title." },
               area: { type: "STRING", description: "Optional new Area." },
               deadline: { type: "STRING", description: "Optional new deadline — natural language or ISO date." },
+              goal: { type: "STRING", description: "Optional LIFE OS Goal name or id to link. Omit if not changing goal." },
             },
             required: ["project"]
           }
@@ -378,13 +411,64 @@ export async function generateChatReply(
         {
           type: "function",
           name: "delete_notion_project",
-          description: "Requests archive/delete of a LIFE OS Project. System will ask Aldo to confirm ya/jangan — always call this tool when user wants to hapus project; do not invent Goals.",
+          description: "Requests archive/delete of a LIFE OS Project. System will ask Aldo to confirm ya/jangan — always call this tool when user wants to hapus project.",
           parameters: {
             type: "OBJECT",
             properties: {
               project: { type: "STRING", description: "Project name or id to archive after user confirms." },
             },
             required: ["project"]
+          }
+        },
+      ] : []),
+      ...(context.goalsEnabled ? [
+        {
+          type: "function",
+          name: "create_notion_goal",
+          description: "Creates a new page in LIFE OS Goals (measurable target with Area/Metric/Progress). Not Memory category Goal. Use when Aldo asks to buat/tambah goal.",
+          parameters: {
+            type: "OBJECT",
+            properties: {
+              name: { type: "STRING", description: "Goal title (property Goal)." },
+              area: { type: "STRING", description: "Optional Area." },
+              metric: { type: "STRING", description: "Optional Metric." },
+              progress: { type: "STRING", description: "Optional Progress value." },
+              status: { type: "STRING", description: "Optional Status (e.g. Not started / In progress / Done)." },
+              target_date: { type: "STRING", description: "Optional Target Date — natural language or ISO date." },
+              notes: { type: "STRING", description: "Optional Notes." },
+            },
+            required: ["name"]
+          }
+        },
+        {
+          type: "function",
+          name: "update_notion_goal",
+          description: "Updates an existing LIFE OS Goal. Match by goal name or id.",
+          parameters: {
+            type: "OBJECT",
+            properties: {
+              goal: { type: "STRING", description: "Existing goal name or id to match." },
+              new_name: { type: "STRING", description: "Optional new goal title." },
+              area: { type: "STRING", description: "Optional new Area." },
+              metric: { type: "STRING", description: "Optional new Metric." },
+              progress: { type: "STRING", description: "Optional new Progress." },
+              status: { type: "STRING", description: "Optional new Status." },
+              target_date: { type: "STRING", description: "Optional new Target Date." },
+              notes: { type: "STRING", description: "Optional new Notes." },
+            },
+            required: ["goal"]
+          }
+        },
+        {
+          type: "function",
+          name: "delete_notion_goal",
+          description: "Requests archive/delete of a LIFE OS Goal. System will ask Aldo to confirm ya/jangan — always call this tool when user wants to hapus goal; linked projects stay.",
+          parameters: {
+            type: "OBJECT",
+            properties: {
+              goal: { type: "STRING", description: "Goal name or id to archive after user confirms." },
+            },
+            required: ["goal"]
           }
         },
       ] : []),

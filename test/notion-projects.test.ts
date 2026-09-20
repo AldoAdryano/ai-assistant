@@ -25,6 +25,7 @@ const baseConfig: AppConfig = {
   allowedTelegramUserId: "111111111",
   notionRoutineDbId: "r-db",
   notionProjectsDataSourceId: null,
+  notionGoalsDataSourceId: null,
   whatsappApiSecret: "w-sec",
   allowedWhatsappNumber: "w-num",
   allowedWhatsappIdentities: ["w-num"],

@@ -1,7 +1,11 @@
-import type { AppConfig, MemoryCategory, MemoryRecord, NoteType, Priority, ProjectRecord, RoutineRecord, TaskRecord } from "./types";
+import type { AppConfig, GoalRecord, MemoryCategory, MemoryRecord, NoteType, Priority, ProjectRecord, RoutineRecord, TaskRecord } from "./types";
 import { normalizeNotionDue, stripDeadlineLeakFromTitle, nowWib, getJakartaDateParts } from "./date";
 
 export const TASK_PROJECT_PROPERTY = "Project";
+export const PROJECT_GOAL_PROPERTY = "Goal";
+
+const GOALS_PAGE_SIZE = 100;
+const GOALS_MAX_ITEMS = 300;
 
 export class NotionRejectionError extends Error {
   constructor(message: string) {
@@ -91,6 +95,207 @@ export async function createNote(config: AppConfig, note: { text: string; noteTy
 const PROJECTS_PAGE_SIZE = 50;
 const PROJECTS_MAX_ITEMS = 200;
 
+function progressNumber(progress: string | number | undefined): number | undefined {
+  if (typeof progress === "number") {
+    return Number.isFinite(progress) ? progress : undefined;
+  }
+  if (typeof progress === "string") {
+    const trimmed = progress.trim();
+    if (!trimmed) return undefined;
+    const parsed = Number(trimmed);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+  return undefined;
+}
+
+function metricFromProperty(property: any): string | undefined {
+  if (property == null) return undefined;
+  if (typeof property.number === "number" && Number.isFinite(property.number)) {
+    return String(property.number);
+  }
+  const text = richText(property);
+  return text || undefined;
+}
+
+function progressFromProperty(property: any): string | number | undefined {
+  if (property == null) return undefined;
+  if (typeof property.number === "number" && Number.isFinite(property.number)) {
+    return property.number;
+  }
+  const text = richText(property);
+  return text || undefined;
+}
+
+function applyGoalWriteProperties(
+  properties: Record<string, unknown>,
+  fields: {
+    name?: string;
+    area?: string;
+    metric?: string;
+    progress?: string | number;
+    status?: string;
+    target_date?: string;
+    notes?: string;
+  },
+  opts: { requireName?: boolean } = {},
+): void {
+  if (fields.name !== undefined || opts.requireName) {
+    properties.Goal = { title: textItems(fields.name ?? "") };
+  }
+  if (fields.area !== undefined) {
+    properties.Area = { select: { name: fields.area } };
+  }
+  if (fields.status !== undefined) {
+    properties.Status = { select: { name: fields.status } };
+  }
+  if (fields.metric !== undefined) {
+    properties.Metric = { rich_text: textItems(fields.metric) };
+  }
+  if (fields.notes !== undefined) {
+    properties.Notes = { rich_text: textItems(fields.notes) };
+  }
+  const progressValue = progressNumber(fields.progress);
+  if (progressValue !== undefined) {
+    properties.Progress = { number: progressValue };
+  }
+  if (fields.target_date !== undefined) {
+    const normDue = normalizeNotionDue(fields.target_date);
+    if (normDue) properties["Target Date"] = { date: { start: normDue } };
+  }
+}
+
+async function goalNameById(
+  config: AppConfig,
+  fetchImpl: typeof fetch,
+): Promise<Map<string, string> | null> {
+  if (!config.notionGoalsDataSourceId) return null;
+  try {
+    const goals = await listGoals(config, fetchImpl);
+    return new Map(goals.map((g) => [g.id, g.name]));
+  } catch (error) {
+    console.error(
+      "listGoals failed during project enrichment:",
+      error instanceof Error ? error.message : error,
+    );
+    return new Map();
+  }
+}
+
+export async function listGoals(
+  config: AppConfig,
+  fetchImpl: typeof fetch = fetch,
+): Promise<GoalRecord[]> {
+  if (!config.notionGoalsDataSourceId) return [];
+
+  const pages: any[] = [];
+  let startCursor: string | undefined;
+  let hasMore = true;
+
+  while (hasMore && pages.length < GOALS_MAX_ITEMS) {
+    const body: Record<string, unknown> = { page_size: GOALS_PAGE_SIZE };
+    if (startCursor) body.start_cursor = startCursor;
+
+    const result = await notionRequest<{
+      results: any[];
+      next_cursor: string | null;
+      has_more: boolean;
+    }>(
+      config,
+      `/data_sources/${config.notionGoalsDataSourceId}/query`,
+      { method: "POST", body: JSON.stringify(body) },
+      fetchImpl,
+    );
+
+    pages.push(...result.results);
+    hasMore = Boolean(result.has_more) && Boolean(result.next_cursor);
+    startCursor = result.next_cursor ?? undefined;
+  }
+
+  return pages
+    .slice(0, GOALS_MAX_ITEMS)
+    .map((page): GoalRecord | null => {
+      const name = titleText(page.properties?.Goal);
+      if (!name) return null;
+      const area = page.properties?.Area?.select?.name;
+      const status = page.properties?.Status?.select?.name;
+      const metric = metricFromProperty(page.properties?.Metric);
+      const progress = progressFromProperty(page.properties?.Progress);
+      const targetDate = page.properties?.["Target Date"]?.date?.start;
+      const notes = richText(page.properties?.Notes) || undefined;
+      return {
+        id: page.id,
+        name,
+        ...(typeof area === "string" ? { area } : {}),
+        ...(typeof status === "string" ? { status } : {}),
+        ...(metric !== undefined ? { metric } : {}),
+        ...(progress !== undefined ? { progress } : {}),
+        ...(typeof targetDate === "string" ? { targetDate } : {}),
+        ...(notes !== undefined ? { notes } : {}),
+      };
+    })
+    .filter((goal): goal is GoalRecord => goal !== null);
+}
+
+export async function createGoal(
+  config: AppConfig,
+  goal: {
+    name: string;
+    area?: string;
+    metric?: string;
+    progress?: string | number;
+    status?: string;
+    target_date?: string;
+    notes?: string;
+  },
+  fetchImpl: typeof fetch = fetch,
+): Promise<string> {
+  if (!config.notionGoalsDataSourceId) {
+    throw new NotionRejectionError("Goals data source is not configured");
+  }
+  const properties: Record<string, unknown> = {};
+  applyGoalWriteProperties(properties, goal, { requireName: true });
+  const result = await notionRequest<{ id: string }>(config, "/pages", {
+    method: "POST",
+    body: JSON.stringify({
+      parent: { type: "data_source_id", data_source_id: config.notionGoalsDataSourceId },
+      properties,
+    }),
+  }, fetchImpl);
+  return result.id;
+}
+
+export async function updateGoal(
+  config: AppConfig,
+  pageId: string,
+  update: {
+    name?: string;
+    area?: string;
+    metric?: string;
+    progress?: string | number;
+    status?: string;
+    target_date?: string;
+    notes?: string;
+  },
+  fetchImpl: typeof fetch = fetch,
+): Promise<void> {
+  const properties: Record<string, unknown> = {};
+  applyGoalWriteProperties(properties, update);
+  await notionRequest(config, `/pages/${pageId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ properties }),
+  }, fetchImpl);
+}
+
+export async function archiveGoal(
+  config: AppConfig,
+  pageId: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<void> {
+  await notionRequest(config, `/blocks/${pageId}`, {
+    method: "DELETE",
+  }, fetchImpl);
+}
+
 export async function listProjects(
   config: AppConfig,
   fetchImpl: typeof fetch = fetch,
@@ -121,24 +326,34 @@ export async function listProjects(
     startCursor = result.next_cursor ?? undefined;
   }
 
+  const goalsConfigured = Boolean(config.notionGoalsDataSourceId);
+  const byGoalId = goalsConfigured ? await goalNameById(config, fetchImpl) : null;
+
   return pages
     .slice(0, PROJECTS_MAX_ITEMS)
     .map((page): ProjectRecord | null => {
       const name = titleText(page.properties?.Project);
       if (!name) return null;
       const area = page.properties?.Area?.select?.name;
-      return {
+      const project: ProjectRecord = {
         id: page.id,
         name,
         ...(typeof area === "string" ? { area } : {}),
       };
+      if (byGoalId) {
+        const rel = page.properties?.[PROJECT_GOAL_PROPERTY]?.relation;
+        const goalId = Array.isArray(rel) && rel[0]?.id ? (rel[0].id as string) : null;
+        project.goalId = goalId;
+        project.goalName = goalId ? (byGoalId.get(goalId) ?? null) : null;
+      }
+      return project;
     })
     .filter((project): project is ProjectRecord => project !== null);
 }
 
 export async function createProject(
   config: AppConfig,
-  project: { name: string; area?: string; deadline?: string },
+  project: { name: string; area?: string; deadline?: string; goalId?: string },
   fetchImpl: typeof fetch = fetch,
 ): Promise<string> {
   if (!config.notionProjectsDataSourceId) {
@@ -154,6 +369,9 @@ export async function createProject(
   if (normDue) {
     properties.Deadline = { date: { start: normDue } };
   }
+  if (project.goalId) {
+    properties[PROJECT_GOAL_PROPERTY] = { relation: [{ id: project.goalId }] };
+  }
   const result = await notionRequest<{ id: string }>(config, "/pages", {
     method: "POST",
     body: JSON.stringify({
@@ -167,7 +385,7 @@ export async function createProject(
 export async function updateProject(
   config: AppConfig,
   pageId: string,
-  update: { name?: string; area?: string; deadline?: string },
+  update: { name?: string; area?: string; deadline?: string; goalId?: string | null },
   fetchImpl: typeof fetch = fetch,
 ): Promise<void> {
   const properties: Record<string, unknown> = {};
@@ -180,6 +398,11 @@ export async function updateProject(
   if (update.deadline !== undefined) {
     const normDue = normalizeNotionDue(update.deadline);
     if (normDue) properties.Deadline = { date: { start: normDue } };
+  }
+  if (update.goalId !== undefined) {
+    properties[PROJECT_GOAL_PROPERTY] = {
+      relation: update.goalId ? [{ id: update.goalId }] : [],
+    };
   }
   await notionRequest(config, `/pages/${pageId}`, {
     method: "PATCH",

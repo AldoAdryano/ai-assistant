@@ -2130,4 +2130,395 @@ describe("handleUserMessage (AI-Driven)", () => {
       expect(d.listGoals).toHaveBeenCalled();
     });
   });
+
+  describe("Learning Link tools", () => {
+    const learningConfig = {
+      notionLearningDataSourceId: "learning-ds",
+    } as AppConfig;
+
+    const sampleSkills = [
+      { id: "learn-mqtt", name: "MQTT", area: "Embedded", level: 1, status: "In progress" },
+      { id: "learn-py", name: "Python", area: "Programming", status: "Not started" },
+    ];
+
+    it("passes learningEnabled and learning into generateChatReply", async () => {
+      const d = deps({
+        listLearning: vi.fn(async () => sampleSkills),
+        generateChatReply: vi.fn(async (_c, _m, ctx) => {
+          expect(ctx.learningEnabled).toBe(true);
+          expect(ctx.learning).toEqual(sampleSkills);
+          return { type: "text", text: "Hai" };
+        }) as any,
+      });
+      await handleUserMessage(env, 123, learningConfig, { text: "Halo" }, d);
+      expect(d.listLearning).toHaveBeenCalledWith(learningConfig);
+    });
+
+    it("passes learningEnabled false when learning data source unset", async () => {
+      const disabledConfig = { notionLearningDataSourceId: null } as AppConfig;
+      const d = deps({
+        generateChatReply: vi.fn(async (_c, _m, ctx) => {
+          expect(ctx.learningEnabled).toBe(false);
+          return { type: "text", text: "Hai" };
+        }) as any,
+      });
+      await handleUserMessage(env, 123, disabledConfig, { text: "Halo" }, d);
+      expect(d.listLearning).not.toHaveBeenCalled();
+    });
+
+    it("listLearning soft-fails (continues without learning)", async () => {
+      const d = deps({
+        listLearning: vi.fn(async () => {
+          throw new Error("Notion learning down");
+        }),
+        generateChatReply: vi.fn(async (_c, _m, ctx) => {
+          expect(ctx.learningEnabled).toBe(true);
+          expect(ctx.learning).toEqual([]);
+          return { type: "text", text: "Hai" };
+        }) as any,
+      });
+      const reply = await handleUserMessage(env, 123, learningConfig, { text: "Halo" }, d);
+      expect(reply).toBe("Hai");
+      expect(d.listLearning).toHaveBeenCalled();
+    });
+
+    it("list_notion_learning returns formatted skill list and short-circuits", async () => {
+      const d = deps({
+        listLearning: vi.fn(async () => sampleSkills),
+        generateChatReply: vi.fn()
+          .mockResolvedValueOnce({
+            type: "function_calls",
+            calls: [{ name: "list_notion_learning", args: {} }],
+          })
+          .mockResolvedValue({ type: "text", text: "should not invent list" }) as any,
+      });
+      const reply = await handleUserMessage(
+        env,
+        123,
+        learningConfig,
+        { text: "daftar skill" },
+        d,
+      );
+      expect(d.listLearning).toHaveBeenCalledWith(learningConfig);
+      expect(reply).toContain("• MQTT — Area: Embedded; Level: 1; Status: In progress");
+      expect(reply).toContain("• Python — Area: Programming; Status: Not started");
+      expect(reply).not.toContain("should not invent list");
+      expect(d.generateChatReply).toHaveBeenCalledTimes(1);
+    });
+
+    it("list_notion_learning filters by status when provided", async () => {
+      const d = deps({
+        listLearning: vi.fn(async () => sampleSkills),
+        generateChatReply: vi.fn()
+          .mockResolvedValueOnce({
+            type: "function_calls",
+            calls: [{ name: "list_notion_learning", args: { status: "In progress" } }],
+          })
+          .mockResolvedValue({ type: "text", text: "ok" }) as any,
+      });
+      const reply = await handleUserMessage(
+        env,
+        123,
+        learningConfig,
+        { text: "skill in progress" },
+        d,
+      );
+      expect(reply).toContain("• MQTT");
+      expect(reply).not.toContain("• Python");
+    });
+
+    it("list_notion_learning returns empty copy when no skills", async () => {
+      const d = deps({
+        listLearning: vi.fn(async () => []),
+        generateChatReply: vi.fn()
+          .mockResolvedValueOnce({
+            type: "function_calls",
+            calls: [{ name: "list_notion_learning", args: {} }],
+          })
+          .mockResolvedValue({ type: "text", text: "ok" }) as any,
+      });
+      const reply = await handleUserMessage(
+        env,
+        123,
+        learningConfig,
+        { text: "daftar skill" },
+        d,
+      );
+      expect(reply).toBe("Belum ada skill di Learning.");
+    });
+
+    it("list_notion_learning soft-disables when learning not configured", async () => {
+      const disabledConfig = { notionLearningDataSourceId: null } as AppConfig;
+      const d = deps({
+        generateChatReply: vi.fn()
+          .mockResolvedValueOnce({
+            type: "function_calls",
+            calls: [{ name: "list_notion_learning", args: {} }],
+          })
+          .mockResolvedValue({ type: "text", text: "ok" }) as any,
+      });
+      const reply = await handleUserMessage(
+        env,
+        123,
+        disabledConfig,
+        { text: "daftar skill" },
+        d,
+      );
+      expect(d.listLearning).not.toHaveBeenCalled();
+      expect(reply).toContain("Learning belum dikonfigurasi.");
+    });
+
+    it("create_notion_learning creates when name is unique", async () => {
+      const d = deps({
+        listLearning: vi.fn(async () => sampleSkills),
+        createLearning: vi.fn(async () => "learn-new"),
+        generateChatReply: vi.fn()
+          .mockResolvedValueOnce({
+            type: "function_calls",
+            calls: [{
+              name: "create_notion_learning",
+              args: {
+                name: "Rust",
+                area: "Systems",
+                level: 1,
+                status: "Not started",
+              },
+            }],
+          })
+          .mockResolvedValue({ type: "text", text: "ok" }) as any,
+      });
+      const reply = await handleUserMessage(
+        env,
+        123,
+        learningConfig,
+        { text: "tambah skill Rust" },
+        d,
+      );
+      expect(d.createLearning).toHaveBeenCalledWith(learningConfig, {
+        name: "Rust",
+        area: "Systems",
+        level: 1,
+        status: "Not started",
+      });
+      expect(reply).toMatch(/Rust/i);
+      expect(reply).toMatch(/sudah|berhasil|dibuat/i);
+    });
+
+    it("create_notion_learning rejects exact duplicate name", async () => {
+      const d = deps({
+        listLearning: vi.fn(async () => sampleSkills),
+        createLearning: vi.fn(async () => "learn-new"),
+        generateChatReply: vi.fn()
+          .mockResolvedValueOnce({
+            type: "function_calls",
+            calls: [{
+              name: "create_notion_learning",
+              args: { name: "mqtt" },
+            }],
+          })
+          .mockResolvedValue({ type: "text", text: "ok" }) as any,
+      });
+      const reply = await handleUserMessage(
+        env,
+        123,
+        learningConfig,
+        { text: "tambah skill mqtt" },
+        d,
+      );
+      expect(d.createLearning).not.toHaveBeenCalled();
+      expect(reply).toMatch(/sudah ada/i);
+      expect(reply).toMatch(/MQTT/i);
+    });
+
+    it("create_notion_learning soft-disables when learning not configured", async () => {
+      const disabledConfig = { notionLearningDataSourceId: null } as AppConfig;
+      const d = deps({
+        createLearning: vi.fn(async () => "learn-new"),
+        generateChatReply: vi.fn()
+          .mockResolvedValueOnce({
+            type: "function_calls",
+            calls: [{
+              name: "create_notion_learning",
+              args: { name: "Rust" },
+            }],
+          })
+          .mockResolvedValue({ type: "text", text: "ok" }) as any,
+      });
+      const reply = await handleUserMessage(
+        env,
+        123,
+        disabledConfig,
+        { text: "tambah skill Rust" },
+        d,
+      );
+      expect(d.createLearning).not.toHaveBeenCalled();
+      expect(d.listLearning).not.toHaveBeenCalled();
+      expect(reply).toContain("Learning belum dikonfigurasi.");
+    });
+
+    it("create_notion_learning refuses when listLearning throws (no fail-open)", async () => {
+      const d = deps({
+        listLearning: vi.fn(async () => {
+          throw new Error("Notion learning down");
+        }),
+        createLearning: vi.fn(async () => "learn-new"),
+        generateChatReply: vi.fn()
+          .mockResolvedValueOnce({
+            type: "function_calls",
+            calls: [{
+              name: "create_notion_learning",
+              args: { name: "Rust" },
+            }],
+          })
+          .mockResolvedValue({ type: "text", text: "ok" }) as any,
+      });
+      const reply = await handleUserMessage(
+        env,
+        123,
+        learningConfig,
+        { text: "tambah skill Rust" },
+        d,
+      );
+      expect(d.createLearning).not.toHaveBeenCalled();
+      expect(reply).toMatch(/gagal cek/i);
+    });
+
+    it("update_notion_learning patches matched skill", async () => {
+      const d = deps({
+        listLearning: vi.fn(async () => sampleSkills),
+        updateLearning: vi.fn(async () => undefined),
+        generateChatReply: vi.fn()
+          .mockResolvedValueOnce({
+            type: "function_calls",
+            calls: [{
+              name: "update_notion_learning",
+              args: {
+                skill: "MQTT",
+                level: 2,
+                status: "In progress",
+              },
+            }],
+          })
+          .mockResolvedValue({ type: "text", text: "ok" }) as any,
+      });
+      const reply = await handleUserMessage(
+        env,
+        123,
+        learningConfig,
+        { text: "naikkan level skill MQTT jadi 2" },
+        d,
+      );
+      expect(d.updateLearning).toHaveBeenCalledWith(learningConfig, "learn-mqtt", {
+        level: 2,
+        status: "In progress",
+      });
+      expect(reply).toMatch(/berhasil|diperbarui|diubah/i);
+    });
+
+    it("update_notion_learning clarifies when skill unknown", async () => {
+      const d = deps({
+        listLearning: vi.fn(async () => sampleSkills),
+        updateLearning: vi.fn(async () => undefined),
+        generateChatReply: vi.fn()
+          .mockResolvedValueOnce({
+            type: "function_calls",
+            calls: [{
+              name: "update_notion_learning",
+              args: { skill: "Finance", level: 1 },
+            }],
+          })
+          .mockResolvedValue({ type: "text", text: "ok" }) as any,
+      });
+      const reply = await handleUserMessage(
+        env,
+        123,
+        learningConfig,
+        { text: "ubah skill Finance" },
+        d,
+      );
+      expect(d.updateLearning).not.toHaveBeenCalled();
+      expect(reply).toMatch(/tidak cocok|tidak ketemu|tidak ada/i);
+    });
+
+    it("delete_notion_learning saves pending delete and asks confirm", async () => {
+      const d = deps({
+        listLearning: vi.fn(async () => sampleSkills),
+        generateChatReply: vi.fn()
+          .mockResolvedValueOnce({
+            type: "function_calls",
+            calls: [{
+              name: "delete_notion_learning",
+              args: { skill: "Python" },
+            }],
+          })
+          .mockResolvedValue({ type: "text", text: "ok" }) as any,
+      });
+      const reply = await handleUserMessage(
+        env,
+        123,
+        learningConfig,
+        { text: "hapus skill Python" },
+        d,
+      );
+      expect(d.archiveLearning).not.toHaveBeenCalled();
+      expect(d.savePendingDelete).toHaveBeenCalledWith(
+        env,
+        123,
+        expect.objectContaining({
+          kind: "learning",
+          ids: ["learn-py"],
+          summary: "Python",
+        }),
+      );
+      expect(reply).toBe(
+        'Aldo, yakin hapus skill Python? Balas "ya" atau "jangan".',
+      );
+    });
+
+    it("blocks second delete when first is learning (DELETE_TOOL_NAMES gate)", async () => {
+      const d = deps({
+        listLearning: vi.fn(async () => sampleSkills),
+        getAllTasks: vi.fn(async () => [
+          { id: "task-1", task: "Tugas A", status: "To Do", priority: "High", due: undefined },
+        ]) as any,
+        generateChatReply: vi.fn()
+          .mockResolvedValueOnce({
+            type: "function_calls",
+            calls: [
+              { name: "delete_notion_learning", args: { skill: "MQTT" } },
+              { name: "delete_notion_tasks", args: { keywords: ["ALL"] } },
+            ],
+          }) as any,
+      });
+      const reply = await handleUserMessage(
+        env,
+        123,
+        learningConfig,
+        { text: "hapus skill MQTT dan semua tugas" },
+        d,
+      );
+      expect(d.savePendingDelete).toHaveBeenCalledTimes(1);
+      expect(d.savePendingDelete).toHaveBeenCalledWith(
+        env,
+        123,
+        expect.objectContaining({ kind: "learning", ids: ["learn-mqtt"] }),
+      );
+      expect(reply).toMatch(/satu batch/i);
+    });
+
+    it("confirm ya after delete_notion_learning archives via archiveLearning", async () => {
+      const d = deps({
+        listLearning: vi.fn(async () => sampleSkills),
+        getPendingDelete: vi.fn(async () => ({
+          kind: "learning" as const,
+          ids: ["learn-py"],
+          summary: "Python",
+          createdAt: Date.now(),
+        })),
+      });
+      const reply = await handleUserMessage(env, 123, learningConfig, { text: "ya" }, d);
+      expect(d.archiveLearning).toHaveBeenCalledWith(learningConfig, "learn-py");
+      expect(reply).toMatch(/berhasil menghapus 1 skill/i);
+    });
+  });
 });

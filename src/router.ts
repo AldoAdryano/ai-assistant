@@ -36,7 +36,9 @@ import { parseIndonesianDeadline, parseIndonesianNaturalDate } from "./date";
 import { extractProjectMention, findExactProject, matchProject } from "./project-match";
 import { formatProjectList, formatProjectStatus } from "./project-intelligence";
 import { findExactGoal, matchGoal } from "./goal-match";
-import type { AppConfig, Env, GoalRecord, ProjectRecord } from "./types";
+import { findExactLearning, matchLearning } from "./learning-match";
+import { formatLearningList } from "./learning-format";
+import type { AppConfig, Env, GoalRecord, LearningRecord, ProjectRecord } from "./types";
 
 export function sanitizeMarkdown(text: string): string {
   return text.replace(/\*\*([^*]+)\*\*/g, "*$1*");
@@ -72,6 +74,7 @@ const DELETE_TOOL_NAMES = new Set([
   "delete_notion_memory",
   "delete_notion_project",
   "delete_notion_goal",
+  "delete_notion_learning",
 ]);
 
 function deleteKindLabel(kind: PendingDelete["kind"]): string {
@@ -197,9 +200,12 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
     const goalsEnabled = Boolean(config.notionGoalsDataSourceId);
     let goals: GoalRecord[] = [];
     let goalsLoaded = false;
+    const learningEnabled = Boolean(config.notionLearningDataSourceId);
+    let learning: LearningRecord[] = [];
+    let learningLoaded = false;
 
-    const [tasks, memories, previousInteractionId, chatLog, loadedProjects, loadedGoals] = isGroup
-      ? [[], [], null as string | null, await deps.getChatLog(env, userId), [] as ProjectRecord[], [] as GoalRecord[]]
+    const [tasks, memories, previousInteractionId, chatLog, loadedProjects, loadedGoals, loadedLearning] = isGroup
+      ? [[], [], null as string | null, await deps.getChatLog(env, userId), [] as ProjectRecord[], [] as GoalRecord[], [] as LearningRecord[]]
       : await Promise.all([
           deps.listActiveTasks(config),
           deps.listMemoryContext(config),
@@ -217,6 +223,12 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
                 return [] as GoalRecord[];
               })
             : Promise.resolve([] as GoalRecord[]),
+          learningEnabled
+            ? deps.listLearning(config).catch((err) => {
+                console.error("listLearning failed (continuing without learning)", err);
+                return [] as LearningRecord[];
+              })
+            : Promise.resolve([] as LearningRecord[]),
         ]);
     if (projectsEnabled) {
       projects = loadedProjects;
@@ -225,6 +237,10 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
     if (goalsEnabled) {
       goals = loadedGoals;
       goalsLoaded = true;
+    }
+    if (learningEnabled) {
+      learning = loadedLearning;
+      learningLoaded = true;
     }
 
     const ensureProjects = async (): Promise<ProjectRecord[]> => {
@@ -243,6 +259,15 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
         goalsLoaded = true;
       }
       return goals;
+    };
+
+    const ensureLearning = async (): Promise<LearningRecord[]> => {
+      if (!learningEnabled) return [];
+      if (!learningLoaded) {
+        learning = await deps.listLearning(config);
+        learningLoaded = true;
+      }
+      return learning;
     };
 
     let currentLog = chatLog ? chatLog + "\nUser: " + payload.text : "User: " + payload.text;
@@ -285,6 +310,8 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
               projectsEnabled: projectsEnabled && !isGroup,
               ...(goalsEnabled && !isGroup ? { goals } : {}),
               goalsEnabled: goalsEnabled && !isGroup,
+              ...(learningEnabled && !isGroup ? { learning } : {}),
+              learningEnabled: learningEnabled && !isGroup,
               chatContext: isGroup ? "group" : "dm",
               conversation: isGroup ? null : conversationContext,
             },
@@ -853,6 +880,181 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
                 pendingDeleteSavedThisTurn = true;
                 replyMessages.push(
                   `Aldo, yakin hapus goal ${matched.goal.name}? Project di bawahnya tidak ikut terhapus. Balas "ya" atau "jangan".`,
+                );
+                break;
+              }
+              case "list_notion_learning": {
+                if (!learningEnabled) {
+                  replyMessages.push("Learning belum dikonfigurasi.");
+                  break;
+                }
+                const knownLearning = await ensureLearning();
+                const statusFilter = typeof call.args.status === "string" ? call.args.status.trim() : "";
+                const filtered = statusFilter
+                  ? knownLearning.filter(
+                      (s) => (s.status ?? "").toLowerCase() === statusFilter.toLowerCase(),
+                    )
+                  : knownLearning;
+                replyMessages.push(formatLearningList(filtered));
+                break;
+              }
+              case "create_notion_learning": {
+                if (!learningEnabled) {
+                  replyMessages.push("Learning belum dikonfigurasi.");
+                  break;
+                }
+                const name = typeof call.args.name === "string" ? call.args.name.trim() : "";
+                if (!name) {
+                  replyMessages.push("Nama skill belum diisi.");
+                  break;
+                }
+                let knownLearning: LearningRecord[];
+                try {
+                  knownLearning = await deps.listLearning(config);
+                  learning = knownLearning;
+                  learningLoaded = true;
+                } catch (err) {
+                  console.error("listLearning failed during create_notion_learning dup-check", err);
+                  replyMessages.push("Gagal cek skill yang ada. Coba lagi sebentar.");
+                  break;
+                }
+                if (findExactLearning(name, knownLearning)) {
+                  replyMessages.push(
+                    `Skill '${name}' sudah ada. Pakai itu atau pilih nama lain.`,
+                  );
+                  break;
+                }
+                const area = typeof call.args.area === "string" ? call.args.area.trim() : "";
+                const status = typeof call.args.status === "string" ? call.args.status.trim() : "";
+                const target = typeof call.args.target === "string" ? call.args.target.trim() : "";
+                const resource = typeof call.args.resource === "string" ? call.args.resource.trim() : "";
+                let last_practiced = typeof call.args.last_practiced === "string" ? call.args.last_practiced.trim() : "";
+                if (last_practiced) {
+                  const naturalParsed = deps.parseIndonesianNaturalDate(last_practiced, new Date());
+                  if (naturalParsed) last_practiced = naturalParsed;
+                }
+                let level: string | number | undefined;
+                if (typeof call.args.level === "number" && Number.isFinite(call.args.level)) {
+                  level = call.args.level;
+                } else if (typeof call.args.level === "string" && call.args.level.trim()) {
+                  const raw = call.args.level.trim();
+                  const n = Number(raw);
+                  level = Number.isFinite(n) ? n : raw;
+                }
+                const createdId = await deps.createLearning(config, {
+                  name,
+                  ...(area ? { area } : {}),
+                  ...(level !== undefined ? { level } : {}),
+                  ...(status ? { status } : {}),
+                  ...(target ? { target } : {}),
+                  ...(resource ? { resource } : {}),
+                  ...(last_practiced ? { last_practiced } : {}),
+                });
+                learning = [
+                  ...knownLearning,
+                  {
+                    id: createdId,
+                    name,
+                    ...(area ? { area } : {}),
+                    ...(level !== undefined ? { level } : {}),
+                    ...(status ? { status } : {}),
+                  },
+                ];
+                learningLoaded = true;
+                replyMessages.push(`Skill '${name}' sudah dibuat.`);
+                break;
+              }
+              case "update_notion_learning": {
+                if (!learningEnabled) {
+                  replyMessages.push("Learning belum dikonfigurasi.");
+                  break;
+                }
+                const query = typeof call.args.skill === "string" ? call.args.skill.trim() : "";
+                const knownLearning = await ensureLearning();
+                const matched = matchLearning(query, knownLearning);
+                if (matched.kind === "none") {
+                  const names = knownLearning.slice(0, 5).map((s) => s.name).join(", ");
+                  replyMessages.push(
+                    `Skill tidak cocok. Skill yang ada: ${names}. Sebut skill yang mana.`,
+                  );
+                  break;
+                }
+                if (matched.kind === "ambiguous") {
+                  const names = matched.candidates.map((s) => s.name).join(", ");
+                  replyMessages.push(
+                    `Beberapa skill cocok (${names}). Sebut skill yang mana.`,
+                  );
+                  break;
+                }
+                const newName = typeof call.args.new_name === "string" ? call.args.new_name.trim() : "";
+                const area = typeof call.args.area === "string" ? call.args.area.trim() : "";
+                const status = typeof call.args.status === "string" ? call.args.status.trim() : "";
+                const target = typeof call.args.target === "string" ? call.args.target.trim() : "";
+                const resource = typeof call.args.resource === "string" ? call.args.resource.trim() : "";
+                let last_practiced = typeof call.args.last_practiced === "string" ? call.args.last_practiced.trim() : "";
+                if (last_practiced) {
+                  const naturalParsed = deps.parseIndonesianNaturalDate(last_practiced, new Date());
+                  if (naturalParsed) last_practiced = naturalParsed;
+                }
+                let level: string | number | undefined;
+                if (typeof call.args.level === "number" && Number.isFinite(call.args.level)) {
+                  level = call.args.level;
+                } else if (typeof call.args.level === "string" && call.args.level.trim()) {
+                  const raw = call.args.level.trim();
+                  const n = Number(raw);
+                  level = Number.isFinite(n) ? n : raw;
+                }
+                const update: {
+                  name?: string;
+                  area?: string;
+                  level?: string | number;
+                  status?: string;
+                  target?: string;
+                  resource?: string;
+                  last_practiced?: string;
+                } = {};
+                if (newName) update.name = newName;
+                if (area) update.area = area;
+                if (level !== undefined) update.level = level;
+                if (status) update.status = status;
+                if (target) update.target = target;
+                if (resource) update.resource = resource;
+                if (last_practiced) update.last_practiced = last_practiced;
+                await deps.updateLearning(config, matched.skill.id, update);
+                replyMessages.push(`Skill '${matched.skill.name}' berhasil diperbarui.`);
+                break;
+              }
+              case "delete_notion_learning": {
+                if (!learningEnabled) {
+                  replyMessages.push("Learning belum dikonfigurasi.");
+                  break;
+                }
+                const query = typeof call.args.skill === "string" ? call.args.skill.trim() : "";
+                const knownLearning = await ensureLearning();
+                const matched = matchLearning(query, knownLearning);
+                if (matched.kind === "none") {
+                  const names = knownLearning.slice(0, 5).map((s) => s.name).join(", ");
+                  replyMessages.push(
+                    `Skill tidak cocok. Skill yang ada: ${names}. Sebut skill yang mana.`,
+                  );
+                  break;
+                }
+                if (matched.kind === "ambiguous") {
+                  const names = matched.candidates.map((s) => s.name).join(", ");
+                  replyMessages.push(
+                    `Beberapa skill cocok (${names}). Sebut skill yang mana.`,
+                  );
+                  break;
+                }
+                await deps.savePendingDelete(env, userId, {
+                  kind: "learning",
+                  ids: [matched.skill.id],
+                  summary: matched.skill.name,
+                  createdAt: Date.now(),
+                });
+                pendingDeleteSavedThisTurn = true;
+                replyMessages.push(
+                  `Aldo, yakin hapus skill ${matched.skill.name}? Balas "ya" atau "jangan".`,
                 );
                 break;
               }

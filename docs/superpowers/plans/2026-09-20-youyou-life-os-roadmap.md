@@ -75,16 +75,17 @@ Seed yang dipakai:
 
 ### Fase 2 — Project Intelligence v1
 
-**Tujuan:** baca progress, bukan cuma CRUD.
+**Spek:** `docs/superpowers/specs/2026-09-20-youyou-project-intelligence-v1-design.md`
+
+**Keputusan v1:** scope baca + briefing group; status = To Do+Doing saja; tools + format router; **tanpa** Mars polish / Done list.
 
 | Item | Isi |
 |------|-----|
-| UX | “status project Smart Room Monitor”, “daftar project”, “task di project X” |
-| Data | Project fields + open tasks (To Do/Doing) + goal name jika ada |
-| Briefing | Opsional: grouping ringan by project di Filter B (cap tetap) |
-| Polish | Alur Mars: setelah create project dari clarify, tawarkan/buat ulang task yang tertunda |
+| UX | “status project …”, “daftar project”, “task di project X” |
+| Data | Project fields + open tasks + goalName bila ada |
+| Briefing | Group deterministik di kode sebelum Gemini (Filter B + cap tetap) |
 
-**Definition of done:** satu perintah status mengembalikan ringkasan akurat vs Notion.
+**Definition of done:** status/daftar akurat; briefing terkelompok; soft-disable; regresi CRUD.
 
 ---
 

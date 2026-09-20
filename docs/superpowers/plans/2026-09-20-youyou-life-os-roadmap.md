@@ -91,16 +91,17 @@ Seed yang dipakai:
 
 ### Fase 3 — Learning Link v1
 
-**Tujuan:** skill stack PDF hidup di chat.
+**Spek:** `docs/superpowers/specs/2026-09-20-youyou-learning-link-v1-design.md`
+
+**Keputusan v1:** CRUD + list (B); Task vs Learning → ragu tanya (C); mirror Goals Link.
 
 | Item | Isi |
 |------|-----|
-| Notion | Secret Learning data source |
-| UX | “saya lagi belajar MQTT”, “naikkan level Python”, “skill apa yang in progress?” |
-| Aturan Brain | *Belajar 30 menit malam ini* → Task; *Python sebagai skill* → Learning |
+| Notion | Secret `NOTION_LEARNING_DATA_SOURCE_ID` |
+| UX | tambah/ubah/list/hapus skill; bedakan dari Task |
 | Fields | Skill, Area, Level, Status, Target, Resource, Last Practiced |
 
-**Definition of done:** beda jelas Learning vs Task di prompt + 1–2 tes regression Brain.
+**Definition of done:** CRUD + clarify boundary + soft-disable + regresi.
 
 ---
 

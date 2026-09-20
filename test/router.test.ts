@@ -1388,6 +1388,288 @@ describe("handleUserMessage (AI-Driven)", () => {
     });
   });
 
+  describe("Project Intelligence", () => {
+    const projectsConfig = {
+      notionProjectsDataSourceId: "projects-ds",
+    } as AppConfig;
+
+    const sampleProjects = [
+      {
+        id: "proj-srm",
+        name: "Smart Room Monitor",
+        area: "IoT",
+        status: "In progress",
+        deadline: "2026-12-01",
+        goalName: "Menguasai Embedded + IoT",
+      },
+      { id: "proj-port", name: "Portfolio" },
+      { id: "proj-alpha", name: "Alpha" },
+      { id: "proj-alpine", name: "Alpine" },
+    ];
+
+    it("list_notion_projects returns formatted project list", async () => {
+      const d = deps({
+        listProjects: vi.fn(async () => sampleProjects),
+        generateChatReply: vi.fn()
+          .mockResolvedValueOnce({
+            type: "function_calls",
+            calls: [{ name: "list_notion_projects", args: {} }],
+          })
+          .mockResolvedValue({ type: "text", text: "should not invent list" }) as any,
+      });
+      const reply = await handleUserMessage(
+        env,
+        123,
+        projectsConfig,
+        { text: "daftar project" },
+        d,
+      );
+      expect(d.listProjects).toHaveBeenCalledWith(projectsConfig);
+      expect(reply).toContain(
+        "• Smart Room Monitor — Area: IoT; Goal: Menguasai Embedded + IoT; Status: In progress; Deadline: 2026-12-01",
+      );
+      expect(reply).toContain("• Portfolio");
+      expect(reply).not.toContain("should not invent list");
+      expect(d.generateChatReply).toHaveBeenCalledTimes(1);
+    });
+
+    it("list_notion_projects returns empty copy when no projects", async () => {
+      const d = deps({
+        listProjects: vi.fn(async () => []),
+        generateChatReply: vi.fn()
+          .mockResolvedValueOnce({
+            type: "function_calls",
+            calls: [{ name: "list_notion_projects", args: {} }],
+          })
+          .mockResolvedValue({ type: "text", text: "ok" }) as any,
+      });
+      const reply = await handleUserMessage(
+        env,
+        123,
+        projectsConfig,
+        { text: "daftar project" },
+        d,
+      );
+      expect(reply).toBe("Belum ada project di LIFE OS.");
+    });
+
+    it("list_notion_projects soft-disables when projects not configured", async () => {
+      const disabledConfig = { notionProjectsDataSourceId: null } as AppConfig;
+      const d = deps({
+        generateChatReply: vi.fn()
+          .mockResolvedValueOnce({
+            type: "function_calls",
+            calls: [{ name: "list_notion_projects", args: {} }],
+          })
+          .mockResolvedValue({ type: "text", text: "ok" }) as any,
+      });
+      const reply = await handleUserMessage(
+        env,
+        123,
+        disabledConfig,
+        { text: "daftar project" },
+        d,
+      );
+      expect(d.listProjects).not.toHaveBeenCalled();
+      expect(reply).toContain("Projects belum dikonfigurasi.");
+    });
+
+    it("get_project_status returns formatted status with open tasks for matched project", async () => {
+      const d = deps({
+        listProjects: vi.fn(async () => sampleProjects),
+        listActiveTasks: vi.fn(async () => [
+          {
+            id: "t1",
+            task: "Wire sensors",
+            status: "To Do",
+            priority: "High",
+            due: "2026-10-01",
+            projectId: "proj-srm",
+            projectName: "Smart Room Monitor",
+          },
+          {
+            id: "t2",
+            task: "Write README",
+            status: "Doing",
+            priority: "Low",
+            projectId: "proj-port",
+            projectName: "Portfolio",
+          },
+          {
+            id: "t3",
+            task: "Calibrate PIR",
+            status: "To Do",
+            priority: "Medium",
+            projectId: "proj-srm",
+            projectName: "Smart Room Monitor",
+          },
+        ]) as any,
+        generateChatReply: vi.fn()
+          .mockResolvedValueOnce({
+            type: "function_calls",
+            calls: [{
+              name: "get_project_status",
+              args: { project: "Smart Room Monitor" },
+            }],
+          })
+          .mockResolvedValue({ type: "text", text: "should not invent tasks" }) as any,
+      });
+      const reply = await handleUserMessage(
+        env,
+        123,
+        projectsConfig,
+        { text: "status project Smart Room Monitor" },
+        d,
+      );
+      expect(d.listActiveTasks).toHaveBeenCalledWith(projectsConfig);
+      expect(reply).toContain(
+        "Smart Room Monitor — Area: IoT; Status: In progress; Deadline: 2026-12-01; Goal: Menguasai Embedded + IoT",
+      );
+      expect(reply).toContain("Task terbuka:");
+      expect(reply).toContain("- [High] Wire sensors — 2026-10-01");
+      expect(reply).toContain("- [Medium] Calibrate PIR");
+      expect(reply).not.toContain("Write README");
+      expect(reply).not.toContain("should not invent tasks");
+      expect(d.generateChatReply).toHaveBeenCalledTimes(1);
+    });
+
+    it("get_project_status shows no open tasks when none match project", async () => {
+      const d = deps({
+        listProjects: vi.fn(async () => sampleProjects),
+        listActiveTasks: vi.fn(async () => [
+          {
+            id: "t2",
+            task: "Write README",
+            status: "To Do",
+            priority: "Low",
+            projectId: "proj-port",
+          },
+        ]) as any,
+        generateChatReply: vi.fn()
+          .mockResolvedValueOnce({
+            type: "function_calls",
+            calls: [{
+              name: "get_project_status",
+              args: { project: "Smart Room Monitor" },
+            }],
+          })
+          .mockResolvedValue({ type: "text", text: "ok" }) as any,
+      });
+      const reply = await handleUserMessage(
+        env,
+        123,
+        projectsConfig,
+        { text: "status Smart Room Monitor" },
+        d,
+      );
+      expect(reply).toContain("Tidak ada task terbuka.");
+      expect(reply).not.toContain("Write README");
+    });
+
+    it("get_project_status clarifies when project unknown", async () => {
+      const d = deps({
+        listProjects: vi.fn(async () => sampleProjects),
+        generateChatReply: vi.fn()
+          .mockResolvedValueOnce({
+            type: "function_calls",
+            calls: [{
+              name: "get_project_status",
+              args: { project: "Finance" },
+            }],
+          })
+          .mockResolvedValue({ type: "text", text: "ok" }) as any,
+      });
+      const reply = await handleUserMessage(
+        env,
+        123,
+        projectsConfig,
+        { text: "status project Finance" },
+        d,
+      );
+      expect(reply).toMatch(/Project tidak cocok/i);
+      expect(reply).toContain("Smart Room Monitor");
+      expect(reply).toMatch(/Sebut project yang mana/i);
+    });
+
+    it("get_project_status clarifies when project ambiguous", async () => {
+      const d = deps({
+        listProjects: vi.fn(async () => sampleProjects),
+        generateChatReply: vi.fn()
+          .mockResolvedValueOnce({
+            type: "function_calls",
+            calls: [{
+              name: "get_project_status",
+              args: { project: "Alp" },
+            }],
+          })
+          .mockResolvedValue({ type: "text", text: "ok" }) as any,
+      });
+      const reply = await handleUserMessage(
+        env,
+        123,
+        projectsConfig,
+        { text: "status Alp" },
+        d,
+      );
+      expect(reply).toMatch(/Beberapa project cocok/i);
+      expect(reply).toContain("Alpha");
+      expect(reply).toContain("Alpine");
+    });
+
+    it("get_project_status soft-disables when projects not configured", async () => {
+      const disabledConfig = { notionProjectsDataSourceId: null } as AppConfig;
+      const d = deps({
+        generateChatReply: vi.fn()
+          .mockResolvedValueOnce({
+            type: "function_calls",
+            calls: [{
+              name: "get_project_status",
+              args: { project: "Portfolio" },
+            }],
+          })
+          .mockResolvedValue({ type: "text", text: "ok" }) as any,
+      });
+      const reply = await handleUserMessage(
+        env,
+        123,
+        disabledConfig,
+        { text: "status Portfolio" },
+        d,
+      );
+      expect(d.listProjects).not.toHaveBeenCalled();
+      expect(reply).toContain("Projects belum dikonfigurasi.");
+    });
+
+    it("Projects CRUD create still works alongside intelligence tools", async () => {
+      const d = deps({
+        listProjects: vi.fn(async () => sampleProjects),
+        createProject: vi.fn(async () => "proj-new"),
+        generateChatReply: vi.fn()
+          .mockResolvedValueOnce({
+            type: "function_calls",
+            calls: [{
+              name: "create_notion_project",
+              args: { name: "Liburan Mars", area: "Belajar" },
+            }],
+          })
+          .mockResolvedValue({ type: "text", text: "ok" }) as any,
+      });
+      const reply = await handleUserMessage(
+        env,
+        123,
+        projectsConfig,
+        { text: "buat project Liburan Mars" },
+        d,
+      );
+      expect(d.createProject).toHaveBeenCalledWith(projectsConfig, {
+        name: "Liburan Mars",
+        area: "Belajar",
+      });
+      expect(reply).toMatch(/Liburan Mars/i);
+      expect(reply).toMatch(/sudah|berhasil|dibuat/i);
+    });
+  });
+
   describe("Goals CRUD", () => {
     const goalsConfig = {
       notionGoalsDataSourceId: "goals-ds",

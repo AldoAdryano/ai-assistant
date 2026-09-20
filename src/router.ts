@@ -34,6 +34,7 @@ import type { PendingDelete, PendingMemory } from "./action-safety";
 import { applyTopicSwitch, detectExplicitTopicSwitch, type ConversationContext } from "./conversation-context";
 import { parseIndonesianDeadline, parseIndonesianNaturalDate } from "./date";
 import { extractProjectMention, findExactProject, matchProject } from "./project-match";
+import { formatProjectList, formatProjectStatus } from "./project-intelligence";
 import { findExactGoal, matchGoal } from "./goal-match";
 import type { AppConfig, Env, GoalRecord, ProjectRecord } from "./types";
 
@@ -483,6 +484,42 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
               case "create_routine": {
                 await deps.addRoutine(config, call.args.name, call.args.time);
                 replyMessages.push(`Rutinitas berhasil ditambahkan.`);
+                break;
+              }
+              case "list_notion_projects": {
+                if (!projectsEnabled) {
+                  replyMessages.push("Projects belum dikonfigurasi.");
+                  break;
+                }
+                const knownProjects = await ensureProjects();
+                replyMessages.push(formatProjectList(knownProjects));
+                break;
+              }
+              case "get_project_status": {
+                if (!projectsEnabled) {
+                  replyMessages.push("Projects belum dikonfigurasi.");
+                  break;
+                }
+                const query = String(call.args.project || "");
+                const knownProjects = await ensureProjects();
+                const matched = matchProject(query, knownProjects);
+                if (matched.kind === "none") {
+                  const names = knownProjects.slice(0, 5).map((p) => p.name).join(", ");
+                  replyMessages.push(
+                    `Project tidak cocok. Project yang ada: ${names}. Sebut project yang mana.`,
+                  );
+                  break;
+                }
+                if (matched.kind === "ambiguous") {
+                  const names = matched.candidates.map((p) => p.name).join(", ");
+                  replyMessages.push(
+                    `Beberapa project cocok (${names}). Sebut project yang mana.`,
+                  );
+                  break;
+                }
+                const activeTasks = await deps.listActiveTasks(config);
+                const openTasks = activeTasks.filter((t) => t.projectId === matched.project.id);
+                replyMessages.push(formatProjectStatus(matched.project, openTasks));
                 break;
               }
               case "create_notion_project": {

@@ -865,6 +865,29 @@ describe("handleUserMessage (AI-Driven)", () => {
     expect(reply).toBe("Ringkasan tugas");
   });
 
+  it("DM briefing short-circuits even when bridge appends media hint", async () => {
+    const overdue = { id: "o1", task: "Overdue A", status: "To Do", priority: "Medium", due: "2026-09-01" } as TaskRecord;
+    const d = deps({
+      listActiveTasks: vi.fn(async () => [overdue]),
+      listMemoryContext: vi.fn(async () => []),
+      generateTaskBriefing: vi.fn(async () => "Ringkasan tugas"),
+    });
+    const reply = await handleUserMessage(
+      env,
+      123,
+      config,
+      {
+        text:
+          "briefing woi\n\n[Bridge: media terakhir tersimpan di bridge — type=gambar. " +
+          "Kalau user minta stiker dari media itu, WAJIB [SYSTEM_ACTION: MAKE_STICKER]]",
+      },
+      d,
+    );
+    expect(d.generateChatReply).not.toHaveBeenCalled();
+    expect(d.generateTaskBriefing).toHaveBeenCalledTimes(1);
+    expect(reply).toBe("Ringkasan tugas");
+  });
+
   it("DM briefing with empty Filter B returns emptyBriefingReply without Gemini", async () => {
     const far = { id: "f1", task: "Far B", status: "To Do", priority: "Medium", due: "2026-12-01" } as TaskRecord;
     const d = deps({

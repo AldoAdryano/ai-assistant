@@ -82,8 +82,13 @@ function deleteKindLabel(kind: PendingDelete["kind"]): string {
   return "tugas";
 }
 
+/** Bridge may append `\n\n[Bridge: media…]` for sticker context — strip for phrase routing. */
+export function normalizeUserTextForRouting(text: string): string {
+  return text.replace(/\n\n\[Bridge:[\s\S]*$/i, "").trim();
+}
+
 export async function handleUserMessage(env: Env, userId: number | string, config: AppConfig, payload: { text: string; imageBase64?: string; audioBase64?: string; chatContext?: "dm" | "group" }, deps: RouterDeps = defaultDeps): Promise<string> {
-  const normalizedText = payload.text.trim();
+  const normalizedText = normalizeUserTextForRouting(payload.text);
   const isGroup = payload.chatContext === "group";
   if (normalizedText === "/start" || normalizedText === "/help") return HELP;
   if (normalizedText.toLowerCase() === "/reset") {

@@ -69,6 +69,8 @@ const DELETE_TOOL_NAMES = new Set([
   "delete_notion_tasks",
   "delete_notion_notes",
   "delete_notion_memory",
+  "delete_notion_project",
+  "delete_notion_goal",
 ]);
 
 function deleteKindLabel(kind: PendingDelete["kind"]): string {

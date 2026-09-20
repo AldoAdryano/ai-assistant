@@ -435,6 +435,34 @@ describe("handleUserMessage (AI-Driven)", () => {
     expect(reply).toMatch(/satu batch|konfirmasi/i);
   });
 
+  it("blocks second delete tool when first is tasks and second is goal", async () => {
+    const goalsConfig = { notionGoalsDataSourceId: "goals-ds" } as AppConfig;
+    const sampleGoals = [{ id: "goal-inc", name: "Dapat income pertama dari skill" }];
+    const d = deps({
+      generateChatReply: vi.fn()
+        .mockResolvedValueOnce({
+          type: "function_calls",
+          calls: [
+            { name: "delete_notion_tasks", args: { keywords: ["ALL"] } },
+            { name: "delete_notion_goal", args: { goal: "Dapat income pertama dari skill" } },
+          ],
+        }) as any,
+      getAllTasks: vi.fn(async () => [
+        { id: "task-1", task: "Tugas A", status: "To Do", priority: "High", due: undefined },
+      ]) as any,
+      listGoals: vi.fn(async () => sampleGoals),
+    });
+    const reply = await handleUserMessage(env, 123, goalsConfig, { text: "hapus semua tugas dan goal income" }, d);
+    expect(d.savePendingDelete).toHaveBeenCalledTimes(1);
+    expect(d.savePendingDelete).toHaveBeenCalledWith(
+      env,
+      123,
+      expect.objectContaining({ kind: "tasks", summary: expect.stringContaining("Tugas A") }),
+    );
+    expect(d.archiveGoal).not.toHaveBeenCalled();
+    expect(reply).toMatch(/satu batch/i);
+  });
+
   it("allows multi-create when user replies beberapa after clarify", async () => {
     const d = deps({
       generateChatReply: vi.fn()

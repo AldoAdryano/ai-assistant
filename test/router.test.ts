@@ -25,6 +25,10 @@ function deps(overrides: Partial<RouterDeps> = {}): RouterDeps {
     archiveProject: vi.fn(async () => undefined),
     createProject: vi.fn(async () => "proj-new"),
     updateProject: vi.fn(async () => undefined),
+    listGoals: vi.fn(async () => []),
+    createGoal: vi.fn(async () => "goal-new"),
+    updateGoal: vi.fn(async () => undefined),
+    archiveGoal: vi.fn(async () => undefined),
     addRoutine: vi.fn(async () => 'routine-id'),
     generateChatReply: vi.fn(async () => ({ type: "text", text: "Jawaban AI" }) as any),
     parseIndonesianDeadline: vi.fn(() => ({ kind: "none" })) as any,
@@ -277,6 +281,43 @@ describe("handleUserMessage (AI-Driven)", () => {
     expect(d.archiveProject).toHaveBeenCalledWith(projectsConfig, "proj-1");
     expect(d.clearPendingDelete).toHaveBeenCalledWith(env, 123);
     expect(reply).toMatch(/berhasil menghapus 1 project/i);
+  });
+
+  it("archives pending goal delete via archiveGoal on ya", async () => {
+    const goalsConfig = { notionGoalsDataSourceId: "goals-ds" } as AppConfig;
+    const d = deps({
+      getPendingDelete: vi.fn(async () => ({
+        kind: "goal" as const,
+        ids: ["goal-1"],
+        summary: "Ship Life OS",
+        createdAt: Date.now(),
+      })),
+    });
+    const reply = await handleUserMessage(env, 123, goalsConfig, { text: "ya" }, d);
+    expect(d.generateChatReply).not.toHaveBeenCalled();
+    expect(d.archiveTask).not.toHaveBeenCalled();
+    expect(d.archiveProject).not.toHaveBeenCalled();
+    expect(d.archiveGoal).toHaveBeenCalledTimes(1);
+    expect(d.archiveGoal).toHaveBeenCalledWith(goalsConfig, "goal-1");
+    expect(d.clearPendingDelete).toHaveBeenCalledWith(env, 123);
+    expect(reply).toMatch(/berhasil menghapus 1 goal/i);
+  });
+
+  it("confirm ya for pending goal delete clears without archive when goals not configured", async () => {
+    const disabledConfig = { notionGoalsDataSourceId: null } as AppConfig;
+    const d = deps({
+      getPendingDelete: vi.fn(async () => ({
+        kind: "goal" as const,
+        ids: ["goal-1"],
+        summary: "Ship Life OS",
+        createdAt: Date.now(),
+      })),
+    });
+    const reply = await handleUserMessage(env, 123, disabledConfig, { text: "ya" }, d);
+    expect(d.archiveGoal).not.toHaveBeenCalled();
+    expect(d.clearPendingDelete).toHaveBeenCalledWith(env, 123);
+    expect(d.generateChatReply).not.toHaveBeenCalled();
+    expect(reply).toContain("Goals belum dikonfigurasi.");
   });
 
   it("cancels pending delete when user says jangan", async () => {

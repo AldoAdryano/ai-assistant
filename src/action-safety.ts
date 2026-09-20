@@ -1,7 +1,7 @@
 import type { MemoryCategory } from "./types";
 
 export type PendingDelete = {
-  kind: "tasks" | "notes" | "memory" | "project";
+  kind: "tasks" | "notes" | "memory" | "project" | "goal";
   ids: string[];
   summary: string;
   createdAt: number;

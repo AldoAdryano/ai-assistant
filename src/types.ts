@@ -29,6 +29,7 @@ export interface Env {
   NOTION_MEMORY_DATA_SOURCE_ID: string;
   NOTION_ROUTINE_DB_ID?: string;
   NOTION_PROJECTS_DATA_SOURCE_ID?: string;
+  NOTION_GOALS_DATA_SOURCE_ID?: string;
 
   GEMINI_MODEL: string;
   NOTION_VERSION: string;
@@ -51,6 +52,7 @@ export interface AppConfig {
   notionMemoryDataSourceId: string;
   notionRoutineDbId: string;
   notionProjectsDataSourceId: string | null;
+  notionGoalsDataSourceId: string | null;
   telegramBotToken: string;
   telegramWebhookSecret: string;
   allowedTelegramUserId: string;
@@ -93,10 +95,23 @@ export interface IncomingTelegramMessage {
   imageBase64?: string;
 }
 
+export interface GoalRecord {
+  id: string;
+  name: string;
+  area?: string | null;
+  metric?: string | null;
+  progress?: string | number | null;
+  status?: string | null;
+  targetDate?: string | null;
+  notes?: string | null;
+}
+
 export interface ProjectRecord {
   id: string;
   name: string;
   area?: string | null;
+  goalId?: string | null;
+  goalName?: string | null;
 }
 
 export interface TaskRecord {

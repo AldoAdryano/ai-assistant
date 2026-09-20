@@ -82,6 +82,44 @@ it("listProjects maps Project title and optional Area", async () => {
   ]);
 });
 
+it("listProjects maps Status select and Deadline date when present", async () => {
+  const fakeFetch: typeof fetch = async () =>
+    new Response(
+      JSON.stringify({
+        results: [
+          {
+            id: "proj-1",
+            properties: {
+              Project: { title: [{ plain_text: "Smart Room Monitor" }] },
+              Status: { select: { name: "In progress" } },
+              Deadline: { date: { start: "2026-12-01" } },
+            },
+          },
+          {
+            id: "proj-2",
+            properties: {
+              Project: { title: [{ plain_text: "No Meta" }] },
+            },
+          },
+        ],
+        has_more: false,
+        next_cursor: null,
+      }),
+      { status: 200 },
+    );
+
+  const projects = await listProjects(configWithProjects, fakeFetch);
+  expect(projects).toEqual([
+    {
+      id: "proj-1",
+      name: "Smart Room Monitor",
+      status: "In progress",
+      deadline: "2026-12-01",
+    },
+    { id: "proj-2", name: "No Meta" },
+  ]);
+});
+
 it("listProjects follows next_cursor until exhausted", async () => {
   const bodies: unknown[] = [];
   const fakeFetch: typeof fetch = async (_input, init) => {

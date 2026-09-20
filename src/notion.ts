@@ -335,10 +335,14 @@ export async function listProjects(
       const name = titleText(page.properties?.Project);
       if (!name) return null;
       const area = page.properties?.Area?.select?.name;
+      const status = page.properties?.Status?.select?.name;
+      const deadline = page.properties?.Deadline?.date?.start;
       const project: ProjectRecord = {
         id: page.id,
         name,
         ...(typeof area === "string" ? { area } : {}),
+        ...(typeof status === "string" ? { status } : {}),
+        ...(typeof deadline === "string" ? { deadline } : {}),
       };
       if (byGoalId) {
         const rel = page.properties?.[PROJECT_GOAL_PROPERTY]?.relation;

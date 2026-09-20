@@ -112,6 +112,8 @@ export interface ProjectRecord {
   area?: string | null;
   goalId?: string | null;
   goalName?: string | null;
+  status?: string | null;
+  deadline?: string | null;
 }
 
 export interface TaskRecord {

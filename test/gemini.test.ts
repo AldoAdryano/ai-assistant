@@ -200,7 +200,7 @@ it("generateTaskBriefing sends briefing prompt for cron", async () => {
   expect(sys).toMatch(/TIDAK mengirim|berinisiatif|Cron/i);
 });
 
-it("generateTaskBriefing labels tasks with projectName or Tanpa project", async () => {
+it("generateTaskBriefing uses pre-grouped taskData by project", async () => {
   let body: any;
   const fetchImpl = async (_u: any, init: any) => {
     body = JSON.parse(init.body);
@@ -211,7 +211,7 @@ it("generateTaskBriefing labels tasks with projectName or Tanpa project", async 
   await generateTaskBriefing(
     config,
     [
-      { id: "1", task: "Laundry", status: "To Do", priority: "High", due: "2026-09-20", projectName: "Persiapan IKN" },
+      { id: "1", task: "task A", status: "To Do", priority: "High", due: "2026-09-20", projectName: "Smart Room Monitor" },
       { id: "2", task: "Beli kopi", status: "To Do", priority: "Low" },
     ],
     { tasks: [], memories: [] },
@@ -219,9 +219,14 @@ it("generateTaskBriefing labels tasks with projectName or Tanpa project", async 
     fetchImpl as any,
   );
   const sys = body.systemInstruction.parts[0].text;
-  expect(sys).toContain("[Persiapan IKN] Laundry (Jatuh tempo: 2026-09-20)");
-  expect(sys).toContain("[Tanpa project] Beli kopi");
-  expect(sys).toContain("Kelompokkan secara natural per project bila ada.");
+  expect(sys).toContain("## Smart Room Monitor");
+  expect(sys).toContain("- task A (Jatuh tempo: 2026-09-20)");
+  expect(sys).toContain("## Tanpa project");
+  expect(sys).toContain("- Beli kopi");
+  expect(sys).toContain(
+    "Daftar di bawah SUDAH dikelompokkan per project. Pertahankan pengelompokan itu. Jangan pindahkan task antar project. Jangan menambah task.",
+  );
+  expect(sys).not.toContain("Kelompokkan secara natural per project bila ada.");
 });
 
 it("includes Projects CRUD tools when projectsEnabled and not group", async () => {

@@ -1,6 +1,7 @@
 import type { ConversationContext } from "./conversation-context";
 import type { AppConfig, GoalRecord, MemoryCategory, MemoryRecord, ProjectRecord, TaskRecord, RoutineRecord } from "./types";
 import { nowWib, getWibTimeLabel } from "./date";
+import { formatTasksGroupedByProject } from "./project-intelligence";
 import { emptyBriefingReply } from "./task-intelligence";
 
 const YOUYOU_PERSONA = "Kamu adalah Youyou, karakter perempuan tsundere tercantik dari donghua Tales of Herding Gods. Kamu adalah asisten pribadi Aldo. Bicaralah dengan nada cerewet, tegas, sedikit angkuh tapi sebenarnya peduli. Panggil dia Aldo atau Tuan Muda. Gunakan formatting WhatsApp jika perlu (*tebal* atau _miring_). DILARANG menggunakan ** ganda atau syntax markdown Telegram. Gunakan emoji ekspresif sesuai suasana (😤💢😳😌 dll) bila cocok. JANGAN PERNAH membuat stiker atau menggunakan tag [SYSTEM_ACTION: MAKE_STICKER] KECUALI Aldo secara eksplisit memintamu untuk membuat/menjadikannya stiker atau mengirim stiker reaksi. Foto bukti tugas / screenshot / makanan BUKAN permintaan stiker — jangan buat stiker di situ. Jika Aldo menyuruhmu membuat stiker dari foto/video, balaslah dengan gaya khasmu lalu WAJIB letakkan tag aksi di akhir pesanmu. Jika pesan mengandung [Bridge: media terakhir tersimpan…], media SUDAH ada di bridge (bisa video yang tidak dikirim ke model) — WAJIB [SYSTEM_ACTION: MAKE_STICKER] dan DILARANG bilang belum ada foto/video atau minta kirim ulang. Caption di stiker HANYA jika Aldo secara eksplisit minta teks ditempel (contoh: \"dengan caption …\", \"tulis …\"). Kalau tidak minta teks, WAJIB pakai [SYSTEM_ACTION: MAKE_STICKER] tanpa caption= — JANGAN mengarang/menemukan teks lucu sendiri. Kalau minta caption, format: [SYSTEM_ACTION: MAKE_STICKER caption=\"teks persis yang diminta\"]. Caption = teks di atas gambar, bukan metadata. Jika user mengirim '[User mengirimkan sebuah ekspresi stiker]', kamu boleh bereaksi; untuk balas dengan stiker ekspresimu sendiri tambahkan [SYSTEM_ACTION: MAKE_STICKER caption=\"marah\"|\"senang\"|\"ngambek\"|\"sedih\"|\"default\"]. ATURAN PENTING: Jika daftar 'Active tasks' kosong (tidak ada tugas), JANGAN PERNAH menyinggung, membahas, atau menagih soal tugas sama sekali. Ingat fakta kesehatan/kondisi dari conversation history dan Explicit memory.";
@@ -614,10 +615,7 @@ export async function generateTaskBriefing(
     return emptyBriefingReply();
   }
 
-  const taskData = tasksForBriefing.map((t) => {
-    const label = t.projectName?.trim() ? t.projectName.trim() : "Tanpa project";
-    return `- [${label}] ${t.task}${t.due ? ` (Jatuh tempo: ${t.due})` : ""}`;
-  }).join("\n");
+  const taskData = formatTasksGroupedByProject(tasksForBriefing);
   const taskTitles = tasksForBriefing.map(t => t.task).join(", ");
   const memoryBlock = formatMemoriesForPrompt(context.memories);
 
@@ -636,7 +634,7 @@ export async function generateTaskBriefing(
     `Daftar tugas untuk dibrief (HANYA ini, jangan tambah atau mengarang):\n${taskData}`,
     `Waktu saat ini: ${todayStr}`,
     "List hanya tugas yang disupply. Jangan membuat tugas fiktif.",
-    "Kelompokkan secara natural per project bila ada.",
+    "Daftar di bawah SUDAH dikelompokkan per project. Pertahankan pengelompokan itu. Jangan pindahkan task antar project. Jangan menambah task.",
     "DILARANG KERAS menyebutkan tahun, tanggal persis, atau kata 'prioritas'. Sebutkan waktu dengan natural (misal: 'hari ini', 'besok pagi', 'sebentar lagi').",
     sourceRules,
     "\nExplicit memory:\n" + memoryBlock,

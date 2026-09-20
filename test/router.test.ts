@@ -29,6 +29,10 @@ function deps(overrides: Partial<RouterDeps> = {}): RouterDeps {
     createGoal: vi.fn(async () => "goal-new"),
     updateGoal: vi.fn(async () => undefined),
     archiveGoal: vi.fn(async () => undefined),
+    listLearning: vi.fn(async () => []),
+    createLearning: vi.fn(async () => "learn-new"),
+    updateLearning: vi.fn(async () => undefined),
+    archiveLearning: vi.fn(async () => undefined),
     addRoutine: vi.fn(async () => 'routine-id'),
     generateChatReply: vi.fn(async () => ({ type: "text", text: "Jawaban AI" }) as any),
     parseIndonesianDeadline: vi.fn(() => ({ kind: "none" })) as any,
@@ -318,6 +322,44 @@ describe("handleUserMessage (AI-Driven)", () => {
     expect(d.clearPendingDelete).toHaveBeenCalledWith(env, 123);
     expect(d.generateChatReply).not.toHaveBeenCalled();
     expect(reply).toContain("Goals belum dikonfigurasi.");
+  });
+
+  it("archives pending learning delete via archiveLearning on ya", async () => {
+    const learningConfig = { notionLearningDataSourceId: "learning-ds" } as AppConfig;
+    const d = deps({
+      getPendingDelete: vi.fn(async () => ({
+        kind: "learning" as const,
+        ids: ["learn-1"],
+        summary: "TypeScript",
+        createdAt: Date.now(),
+      })),
+    });
+    const reply = await handleUserMessage(env, 123, learningConfig, { text: "ya" }, d);
+    expect(d.generateChatReply).not.toHaveBeenCalled();
+    expect(d.archiveTask).not.toHaveBeenCalled();
+    expect(d.archiveProject).not.toHaveBeenCalled();
+    expect(d.archiveGoal).not.toHaveBeenCalled();
+    expect(d.archiveLearning).toHaveBeenCalledTimes(1);
+    expect(d.archiveLearning).toHaveBeenCalledWith(learningConfig, "learn-1");
+    expect(d.clearPendingDelete).toHaveBeenCalledWith(env, 123);
+    expect(reply).toMatch(/berhasil menghapus 1 skill/i);
+  });
+
+  it("confirm ya for pending learning delete clears without archive when learning not configured", async () => {
+    const disabledConfig = { notionLearningDataSourceId: null } as AppConfig;
+    const d = deps({
+      getPendingDelete: vi.fn(async () => ({
+        kind: "learning" as const,
+        ids: ["learn-1"],
+        summary: "TypeScript",
+        createdAt: Date.now(),
+      })),
+    });
+    const reply = await handleUserMessage(env, 123, disabledConfig, { text: "ya" }, d);
+    expect(d.archiveLearning).not.toHaveBeenCalled();
+    expect(d.clearPendingDelete).toHaveBeenCalledWith(env, 123);
+    expect(d.generateChatReply).not.toHaveBeenCalled();
+    expect(reply).toContain("Learning belum dikonfigurasi.");
   });
 
   it("cancels pending delete when user says jangan", async () => {

@@ -1,6 +1,6 @@
 import { generateChatReply, generateTaskBriefing, GeminiApiError } from "./gemini";
 import type { ChatReply } from "./gemini";
-import { NotionRejectionError, NotionUnknownError, createNote, createTask, listActiveTasks, listProjects, getAllTasks, getAllNotes, listMemoryContext, recallMemory, upsertMemory, getAllMemory, updateTask, archiveTask, archiveProject, createProject, updateProject, listGoals, createGoal, updateGoal, archiveGoal, addRoutine } from "./notion";
+import { NotionRejectionError, NotionUnknownError, createNote, createTask, listActiveTasks, listProjects, getAllTasks, getAllNotes, listMemoryContext, recallMemory, upsertMemory, getAllMemory, updateTask, archiveTask, archiveProject, createProject, updateProject, listGoals, createGoal, updateGoal, archiveGoal, listLearning, createLearning, updateLearning, archiveLearning, addRoutine } from "./notion";
 import { detectBriefingRequest, selectBriefingTasks, emptyBriefingReply } from "./task-intelligence";
 import {
   getInteractionId,
@@ -44,7 +44,7 @@ export function sanitizeMarkdown(text: string): string {
 
 export interface RouterDeps {
   createNote: typeof createNote; createTask: typeof createTask; listActiveTasks: typeof listActiveTasks; listProjects: typeof listProjects; getAllTasks: typeof getAllTasks; getAllNotes: typeof getAllNotes;
-  upsertMemory: typeof upsertMemory; recallMemory: typeof recallMemory; listMemoryContext: typeof listMemoryContext; getAllMemory: typeof getAllMemory; updateTask: typeof updateTask; archiveTask: typeof archiveTask; archiveProject: typeof archiveProject; createProject: typeof createProject; updateProject: typeof updateProject; listGoals: typeof listGoals; createGoal: typeof createGoal; updateGoal: typeof updateGoal; archiveGoal: typeof archiveGoal; addRoutine: typeof addRoutine;
+  upsertMemory: typeof upsertMemory; recallMemory: typeof recallMemory; listMemoryContext: typeof listMemoryContext; getAllMemory: typeof getAllMemory; updateTask: typeof updateTask; archiveTask: typeof archiveTask; archiveProject: typeof archiveProject; createProject: typeof createProject; updateProject: typeof updateProject; listGoals: typeof listGoals; createGoal: typeof createGoal; updateGoal: typeof updateGoal; archiveGoal: typeof archiveGoal; listLearning: typeof listLearning; createLearning: typeof createLearning; updateLearning: typeof updateLearning; archiveLearning: typeof archiveLearning; addRoutine: typeof addRoutine;
   generateChatReply: typeof generateChatReply;
   parseIndonesianDeadline: typeof parseIndonesianDeadline;
   parseIndonesianNaturalDate: typeof parseIndonesianNaturalDate;
@@ -58,7 +58,7 @@ export interface RouterDeps {
   generateTaskBriefing: typeof generateTaskBriefing;
 }
 const defaultDeps: RouterDeps = {
-  createNote, createTask, listActiveTasks, listProjects, getAllTasks, getAllNotes, upsertMemory, recallMemory, listMemoryContext, getAllMemory, updateTask, archiveTask, archiveProject, createProject, updateProject, listGoals, createGoal, updateGoal, archiveGoal, addRoutine,
+  createNote, createTask, listActiveTasks, listProjects, getAllTasks, getAllNotes, upsertMemory, recallMemory, listMemoryContext, getAllMemory, updateTask, archiveTask, archiveProject, createProject, updateProject, listGoals, createGoal, updateGoal, archiveGoal, listLearning, createLearning, updateLearning, archiveLearning, addRoutine,
   generateChatReply, parseIndonesianDeadline, parseIndonesianNaturalDate, getInteractionId, saveInteractionId, getChatLog, saveChatLog, clearMemory,
   getPendingDelete, savePendingDelete, clearPendingDelete, getPendingMemory, savePendingMemory, clearPendingMemory,
   getConversationContext, saveConversationContext, clearConversationContext,
@@ -79,6 +79,7 @@ function deleteKindLabel(kind: PendingDelete["kind"]): string {
   if (kind === "memory") return "memori";
   if (kind === "project") return "project";
   if (kind === "goal") return "goal";
+  if (kind === "learning") return "skill";
   return "tugas";
 }
 
@@ -119,12 +120,17 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
             await deps.clearPendingDelete(env, userId);
             return "Goals belum dikonfigurasi.";
           }
+          if (pending.kind === "learning" && !config.notionLearningDataSourceId) {
+            await deps.clearPendingDelete(env, userId);
+            return "Learning belum dikonfigurasi.";
+          }
           let successCount = 0;
           let failCount = 0;
           for (const id of pending.ids) {
             try {
               if (pending.kind === "goal") await deps.archiveGoal(config, id);
               else if (pending.kind === "project") await deps.archiveProject(config, id);
+              else if (pending.kind === "learning") await deps.archiveLearning(config, id);
               else await deps.archiveTask(config, id);
               successCount++;
             } catch {

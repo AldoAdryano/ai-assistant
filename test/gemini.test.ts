@@ -439,6 +439,118 @@ it("omits Projects CRUD tools in group even when projectsEnabled", async () => {
   expect(requestBody.tools).toBeUndefined();
 });
 
+it("includes Learning CRUD tools when learningEnabled and not group", async () => {
+  let requestBody: any;
+  const fakeFetch: typeof fetch = async (_input, init) => {
+    requestBody = JSON.parse(String(init?.body));
+    return interaction("Siap.");
+  };
+  await generateChatReply(config, { text: "Tambah skill MQTT" }, {
+    tasks: [],
+    memories: [],
+    learningEnabled: true,
+    learning: [{ id: "learn-1", name: "MQTT", area: "Embedded", status: "In progress" }],
+  }, undefined, fakeFetch);
+
+  const toolNames = requestBody.tools[0].functionDeclarations.map((t: { name: string }) => t.name);
+  expect(toolNames).toContain("create_notion_learning");
+  expect(toolNames).toContain("update_notion_learning");
+  expect(toolNames).toContain("delete_notion_learning");
+  expect(toolNames).toContain("list_notion_learning");
+
+  const create = requestBody.tools[0].functionDeclarations.find(
+    (t: { name: string }) => t.name === "create_notion_learning",
+  );
+  expect(create.parameters.required).toEqual(["name"]);
+  expect(create.parameters.properties).toMatchObject({
+    name: { type: "STRING" },
+    area: { type: "STRING" },
+    level: { type: "STRING" },
+    status: { type: "STRING" },
+    target: { type: "STRING" },
+    resource: { type: "STRING" },
+    last_practiced: { type: "STRING" },
+  });
+
+  const update = requestBody.tools[0].functionDeclarations.find(
+    (t: { name: string }) => t.name === "update_notion_learning",
+  );
+  expect(update.parameters.required).toEqual(["skill"]);
+  expect(update.parameters.properties).toMatchObject({
+    skill: { type: "STRING" },
+    new_name: { type: "STRING" },
+    area: { type: "STRING" },
+    level: { type: "STRING" },
+    status: { type: "STRING" },
+    target: { type: "STRING" },
+    resource: { type: "STRING" },
+    last_practiced: { type: "STRING" },
+  });
+
+  const del = requestBody.tools[0].functionDeclarations.find(
+    (t: { name: string }) => t.name === "delete_notion_learning",
+  );
+  expect(del.parameters.required).toEqual(["skill"]);
+  expect(del.parameters.properties).toMatchObject({
+    skill: { type: "STRING" },
+  });
+
+  const list = requestBody.tools[0].functionDeclarations.find(
+    (t: { name: string }) => t.name === "list_notion_learning",
+  );
+  expect(list.parameters.required).toEqual([]);
+  expect(list.parameters.properties).toMatchObject({
+    status: { type: "STRING" },
+  });
+  expect(list.description).toMatch(/daftar|list|skill|Learning/i);
+
+  const systemText = requestBody.systemInstruction.parts[0].text;
+  expect(systemText).toContain("Known LIFE OS learning");
+  expect(systemText).toContain("MQTT");
+  expect(systemText).toContain("id: learn-1");
+  expect(systemText).toMatch(/LIFE OS Learning/i);
+  expect(systemText).toMatch(/skill stack|bukan Memory|not Memory/i);
+  expect(systemText).toMatch(/create_notion_task/);
+  expect(systemText).toMatch(/clarify|tanya|ragu|ambigu/i);
+  expect(systemText).toMatch(/delete_notion_learning|ya\/jangan|konfirmasi/i);
+});
+
+it("omits Learning CRUD tools when learningEnabled is false or absent", async () => {
+  let requestBody: any;
+  const fakeFetch: typeof fetch = async (_input, init) => {
+    requestBody = JSON.parse(String(init?.body));
+    return interaction("Siap.");
+  };
+  await generateChatReply(config, { text: "Tambah skill MQTT" }, {
+    tasks: [],
+    memories: [],
+  }, undefined, fakeFetch);
+
+  const toolNames = requestBody.tools[0].functionDeclarations.map((t: { name: string }) => t.name);
+  expect(toolNames).not.toContain("create_notion_learning");
+  expect(toolNames).not.toContain("update_notion_learning");
+  expect(toolNames).not.toContain("delete_notion_learning");
+  expect(toolNames).not.toContain("list_notion_learning");
+  expect(requestBody.systemInstruction.parts[0].text).not.toContain("Known LIFE OS learning");
+});
+
+it("omits Learning CRUD tools in group even when learningEnabled", async () => {
+  let requestBody: any;
+  const fakeFetch: typeof fetch = async (_input, init) => {
+    requestBody = JSON.parse(String(init?.body));
+    return interaction("Halo grup!");
+  };
+  await generateChatReply(config, { text: "Tambah skill MQTT" }, {
+    tasks: [],
+    memories: [],
+    chatContext: "group",
+    learningEnabled: true,
+    learning: [{ id: "learn-1", name: "MQTT" }],
+  }, undefined, fakeFetch);
+
+  expect(requestBody.tools).toBeUndefined();
+});
+
 it("logs sanitized diagnostic when Gemini API fails", async () => {
   const fakeFetch: typeof fetch = async () => new Response(JSON.stringify({
     error: { code: 400, message: "Example Gemini diagnostic message secret_123", status: "INVALID_ARGUMENT" }

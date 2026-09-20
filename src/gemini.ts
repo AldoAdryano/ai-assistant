@@ -1,5 +1,5 @@
 import type { ConversationContext } from "./conversation-context";
-import type { AppConfig, GoalRecord, MemoryCategory, MemoryRecord, ProjectRecord, TaskRecord, RoutineRecord } from "./types";
+import type { AppConfig, GoalRecord, LearningRecord, MemoryCategory, MemoryRecord, ProjectRecord, TaskRecord, RoutineRecord } from "./types";
 import { nowWib, getWibTimeLabel } from "./date";
 import { formatTasksGroupedByProject } from "./project-intelligence";
 import { emptyBriefingReply } from "./task-intelligence";
@@ -131,6 +131,15 @@ const GOALS_CRUD_RULES = [
   "4. delete_notion_goal: selalu panggil tool (sistem akan minta konfirmasi ya/jangan). Jangan arsip sendiri tanpa tool.",
 ].join(" ");
 
+const LEARNING_RULES = [
+  "LEARNING — LIFE OS Learning / Brain boundary (DM only when tools tersedia):",
+  "1. LIFE OS Learning = skill stack (Skill/Area/Level/Status) — bukan Memory, bukan Goals. Jangan campur store.",
+  "2. Jadwal/deadline eksplisit untuk sesi belajar (contoh: 'belajar MQTT 30 menit malam ini') → create_notion_task (boleh notes skill).",
+  "3. Skill/stack eksplisit (contoh: 'tambah skill Python', 'saya lagi belajar MQTT', 'naikkan level …') → Learning tools (create/update/list/delete_notion_learning).",
+  "4. Ambigu 'belajar X' tanpa jadwal → clarify dulu: skill di Learning atau jadwalkan sebagai Task? Jangan create keduanya diam-diam.",
+  "5. delete_notion_learning: selalu panggil tool (sistem akan minta konfirmasi ya/jangan). Jangan arsip sendiri tanpa tool.",
+].join(" ");
+
 function formatProjectsForPrompt(projects: ProjectRecord[]): string {
   const lines = projects.map((p) => `- ${p.name} (id: ${p.id})`);
   return [
@@ -149,6 +158,15 @@ function formatGoalsForPrompt(goals: GoalRecord[]): string {
   ].join("\n");
 }
 
+function formatLearningForPrompt(skills: LearningRecord[]): string {
+  const lines = skills.map((s) => `- ${s.name} (id: ${s.id})`);
+  return [
+    "Known LIFE OS learning skills (use these names only; do not invent):",
+    ...lines,
+    "LEARNING MATCH: When updating/deleting, pass skill=name or id from this list. If unsure which → clarify in text.",
+  ].join("\n");
+}
+
 export async function generateChatReply(
   config: AppConfig,
   userMessage: { text: string; imageBase64?: string; audioBase64?: string },
@@ -159,6 +177,8 @@ export async function generateChatReply(
     projectsEnabled?: boolean;
     goals?: GoalRecord[];
     goalsEnabled?: boolean;
+    learning?: LearningRecord[];
+    learningEnabled?: boolean;
     chatContext?: "dm" | "group";
     conversation?: ConversationContext | null;
   },
@@ -175,6 +195,9 @@ export async function generateChatReply(
     : null;
   const goalsBlock = !isGroup && context.goals?.length
     ? formatGoalsForPrompt(context.goals)
+    : null;
+  const learningBlock = !isGroup && context.learning?.length
+    ? formatLearningForPrompt(context.learning)
     : null;
   
   const now = nowWib();
@@ -210,8 +233,10 @@ export async function generateChatReply(
       "Instead, your FIRST action must be to call `read_notion_tasks` to search the database. Only after you have retrieved the correct UUIDs from the read action, you may proceed to use `delete_notion_tasks` or `update_notion_task`. If your environment does not support recursive tool calling, simply read the tasks for the user first and ask them to confirm which ones to delete.",
       ...(projectsBlock ? [projectsBlock] : []),
       ...(goalsBlock ? [goalsBlock] : []),
+      ...(learningBlock ? [learningBlock] : []),
       ...(context.projectsEnabled ? [PROJECTS_CRUD_RULES] : []),
       ...(context.goalsEnabled ? [GOALS_CRUD_RULES] : []),
+      ...(context.learningEnabled ? [LEARNING_RULES] : []),
       "\nActive tasks:\n" + (taskLines.length ? taskLines.join("\n") : "- none"),
       "\nExplicit memory:\n" + memoryBlock,
     ]),
@@ -489,6 +514,69 @@ export async function generateChatReply(
               goal: { type: "STRING", description: "Goal name or id to archive after user confirms." },
             },
             required: ["goal"]
+          }
+        },
+      ] : []),
+      ...(context.learningEnabled ? [
+        {
+          type: "function",
+          name: "create_notion_learning",
+          description: "Creates a new skill page in LIFE OS Learning (skill stack). Not Memory, not Goals, not a scheduled study Task. Use when Aldo asks to tambah/buat skill.",
+          parameters: {
+            type: "OBJECT",
+            properties: {
+              name: { type: "STRING", description: "Skill title (property Skill)." },
+              area: { type: "STRING", description: "Optional Area." },
+              level: { type: "STRING", description: "Optional Level." },
+              status: { type: "STRING", description: "Optional Status (e.g. Not started / In progress / Done)." },
+              target: { type: "STRING", description: "Optional Target." },
+              resource: { type: "STRING", description: "Optional Resource (URL or text)." },
+              last_practiced: { type: "STRING", description: "Optional Last Practiced — natural language or ISO date." },
+            },
+            required: ["name"]
+          }
+        },
+        {
+          type: "function",
+          name: "update_notion_learning",
+          description: "Updates an existing LIFE OS Learning skill (rename, area, level, status, target, resource, last practiced). Match by skill name or id.",
+          parameters: {
+            type: "OBJECT",
+            properties: {
+              skill: { type: "STRING", description: "Existing skill name or id to match." },
+              new_name: { type: "STRING", description: "Optional new skill title." },
+              area: { type: "STRING", description: "Optional new Area." },
+              level: { type: "STRING", description: "Optional new Level." },
+              status: { type: "STRING", description: "Optional new Status." },
+              target: { type: "STRING", description: "Optional new Target." },
+              resource: { type: "STRING", description: "Optional new Resource." },
+              last_practiced: { type: "STRING", description: "Optional new Last Practiced date." },
+            },
+            required: ["skill"]
+          }
+        },
+        {
+          type: "function",
+          name: "delete_notion_learning",
+          description: "Requests archive/delete of a LIFE OS Learning skill. System will ask Aldo to confirm ya/jangan — always call this tool when user wants to hapus skill.",
+          parameters: {
+            type: "OBJECT",
+            properties: {
+              skill: { type: "STRING", description: "Skill name or id to archive after user confirms." },
+            },
+            required: ["skill"]
+          }
+        },
+        {
+          type: "function",
+          name: "list_notion_learning",
+          description: "Lists LIFE OS Learning skills (name, area, level, status). Optional status filter (e.g. In progress). Use when Aldo asks daftar/list skill.",
+          parameters: {
+            type: "OBJECT",
+            properties: {
+              status: { type: "STRING", description: "Optional Status filter (e.g. In progress)." },
+            },
+            required: []
           }
         },
       ] : []),

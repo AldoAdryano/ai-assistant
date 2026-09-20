@@ -1,4 +1,4 @@
-import type { AppConfig, GoalRecord, MemoryCategory, MemoryRecord, NoteType, Priority, ProjectRecord, RoutineRecord, TaskRecord } from "./types";
+import type { AppConfig, GoalRecord, LearningRecord, MemoryCategory, MemoryRecord, NoteType, Priority, ProjectRecord, RoutineRecord, TaskRecord } from "./types";
 import { normalizeNotionDue, stripDeadlineLeakFromTitle, nowWib, getJakartaDateParts } from "./date";
 
 export const TASK_PROJECT_PROPERTY = "Project";
@@ -6,6 +6,8 @@ export const PROJECT_GOAL_PROPERTY = "Goal";
 
 const GOALS_PAGE_SIZE = 100;
 const GOALS_MAX_ITEMS = 300;
+const LEARNING_PAGE_SIZE = 100;
+const LEARNING_MAX_ITEMS = 300;
 
 export class NotionRejectionError extends Error {
   constructor(message: string) {
@@ -287,6 +289,185 @@ export async function updateGoal(
 }
 
 export async function archiveGoal(
+  config: AppConfig,
+  pageId: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<void> {
+  await notionRequest(config, `/blocks/${pageId}`, {
+    method: "DELETE",
+  }, fetchImpl);
+}
+
+function looksLikeUrl(value: string): boolean {
+  return /^https?:\/\//i.test(value.trim());
+}
+
+function levelFromProperty(property: any): string | number | undefined {
+  if (property == null) return undefined;
+  if (typeof property.number === "number" && Number.isFinite(property.number)) {
+    return property.number;
+  }
+  const text = richText(property);
+  return text || undefined;
+}
+
+function resourceFromProperty(property: any): string | undefined {
+  if (property == null) return undefined;
+  if (typeof property.url === "string" && property.url.trim()) {
+    return property.url.trim();
+  }
+  const text = richText(property);
+  return text || undefined;
+}
+
+function applyLearningWriteProperties(
+  properties: Record<string, unknown>,
+  fields: {
+    name?: string;
+    area?: string;
+    level?: string | number;
+    status?: string;
+    target?: string;
+    resource?: string;
+    last_practiced?: string;
+  },
+  opts: { requireName?: boolean } = {},
+): void {
+  if (fields.name !== undefined || opts.requireName) {
+    properties.Skill = { title: textItems(fields.name ?? "") };
+  }
+  if (fields.area !== undefined) {
+    properties.Area = { select: { name: fields.area } };
+  }
+  if (fields.status !== undefined) {
+    properties.Status = { select: { name: fields.status } };
+  }
+  const levelValue = progressNumber(fields.level);
+  if (levelValue !== undefined) {
+    properties.Level = { number: levelValue };
+  }
+  if (fields.target !== undefined) {
+    properties.Target = { rich_text: textItems(fields.target) };
+  }
+  if (fields.resource !== undefined) {
+    if (looksLikeUrl(fields.resource)) {
+      properties.Resource = { url: fields.resource.trim() };
+    } else {
+      properties.Resource = { rich_text: textItems(fields.resource) };
+    }
+  }
+  if (fields.last_practiced !== undefined) {
+    const normDue = normalizeNotionDue(fields.last_practiced);
+    if (normDue) properties["Last Practiced"] = { date: { start: normDue } };
+  }
+}
+
+export async function listLearning(
+  config: AppConfig,
+  fetchImpl: typeof fetch = fetch,
+): Promise<LearningRecord[]> {
+  if (!config.notionLearningDataSourceId) return [];
+
+  const pages: any[] = [];
+  let startCursor: string | undefined;
+  let hasMore = true;
+
+  while (hasMore && pages.length < LEARNING_MAX_ITEMS) {
+    const body: Record<string, unknown> = { page_size: LEARNING_PAGE_SIZE };
+    if (startCursor) body.start_cursor = startCursor;
+
+    const result = await notionRequest<{
+      results: any[];
+      next_cursor: string | null;
+      has_more: boolean;
+    }>(
+      config,
+      `/data_sources/${config.notionLearningDataSourceId}/query`,
+      { method: "POST", body: JSON.stringify(body) },
+      fetchImpl,
+    );
+
+    pages.push(...result.results);
+    hasMore = Boolean(result.has_more) && Boolean(result.next_cursor);
+    startCursor = result.next_cursor ?? undefined;
+  }
+
+  return pages
+    .slice(0, LEARNING_MAX_ITEMS)
+    .map((page): LearningRecord | null => {
+      const name = titleText(page.properties?.Skill);
+      if (!name) return null;
+      const area = page.properties?.Area?.select?.name;
+      const status = page.properties?.Status?.select?.name;
+      const level = levelFromProperty(page.properties?.Level);
+      const target = richText(page.properties?.Target) || undefined;
+      const resource = resourceFromProperty(page.properties?.Resource);
+      const lastPracticed = page.properties?.["Last Practiced"]?.date?.start;
+      return {
+        id: page.id,
+        name,
+        ...(typeof area === "string" ? { area } : {}),
+        ...(typeof status === "string" ? { status } : {}),
+        ...(level !== undefined ? { level } : {}),
+        ...(target !== undefined ? { target } : {}),
+        ...(resource !== undefined ? { resource } : {}),
+        ...(typeof lastPracticed === "string" ? { lastPracticed } : {}),
+      };
+    })
+    .filter((skill): skill is LearningRecord => skill !== null);
+}
+
+export async function createLearning(
+  config: AppConfig,
+  skill: {
+    name: string;
+    area?: string;
+    level?: string | number;
+    status?: string;
+    target?: string;
+    resource?: string;
+    last_practiced?: string;
+  },
+  fetchImpl: typeof fetch = fetch,
+): Promise<string> {
+  if (!config.notionLearningDataSourceId) {
+    throw new NotionRejectionError("Learning data source is not configured");
+  }
+  const properties: Record<string, unknown> = {};
+  applyLearningWriteProperties(properties, skill, { requireName: true });
+  const result = await notionRequest<{ id: string }>(config, "/pages", {
+    method: "POST",
+    body: JSON.stringify({
+      parent: { type: "data_source_id", data_source_id: config.notionLearningDataSourceId },
+      properties,
+    }),
+  }, fetchImpl);
+  return result.id;
+}
+
+export async function updateLearning(
+  config: AppConfig,
+  pageId: string,
+  update: {
+    name?: string;
+    area?: string;
+    level?: string | number;
+    status?: string;
+    target?: string;
+    resource?: string;
+    last_practiced?: string;
+  },
+  fetchImpl: typeof fetch = fetch,
+): Promise<void> {
+  const properties: Record<string, unknown> = {};
+  applyLearningWriteProperties(properties, update);
+  await notionRequest(config, `/pages/${pageId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ properties }),
+  }, fetchImpl);
+}
+
+export async function archiveLearning(
   config: AppConfig,
   pageId: string,
   fetchImpl: typeof fetch = fetch,

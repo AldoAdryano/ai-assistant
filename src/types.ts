@@ -30,6 +30,7 @@ export interface Env {
   NOTION_ROUTINE_DB_ID?: string;
   NOTION_PROJECTS_DATA_SOURCE_ID?: string;
   NOTION_GOALS_DATA_SOURCE_ID?: string;
+  NOTION_LEARNING_DATA_SOURCE_ID?: string;
 
   GEMINI_MODEL: string;
   NOTION_VERSION: string;
@@ -53,6 +54,7 @@ export interface AppConfig {
   notionRoutineDbId: string;
   notionProjectsDataSourceId: string | null;
   notionGoalsDataSourceId: string | null;
+  notionLearningDataSourceId: string | null;
   telegramBotToken: string;
   telegramWebhookSecret: string;
   allowedTelegramUserId: string;
@@ -114,6 +116,17 @@ export interface ProjectRecord {
   goalName?: string | null;
   status?: string | null;
   deadline?: string | null;
+}
+
+export interface LearningRecord {
+  id: string;
+  name: string;
+  area?: string | null;
+  level?: string | number | null;
+  status?: string | null;
+  target?: string | null;
+  resource?: string | null;
+  lastPracticed?: string | null;
 }
 
 export interface TaskRecord {

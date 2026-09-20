@@ -71,6 +71,10 @@ export function getConfig(env: Env): AppConfig {
       typeof env.NOTION_GOALS_DATA_SOURCE_ID === "string" && env.NOTION_GOALS_DATA_SOURCE_ID.trim() !== ""
         ? env.NOTION_GOALS_DATA_SOURCE_ID.trim()
         : null,
+    notionLearningDataSourceId:
+      typeof env.NOTION_LEARNING_DATA_SOURCE_ID === "string" && env.NOTION_LEARNING_DATA_SOURCE_ID.trim() !== ""
+        ? env.NOTION_LEARNING_DATA_SOURCE_ID.trim()
+        : null,
     telegramBotToken: required("TELEGRAM_BOT_TOKEN", env.TELEGRAM_BOT_TOKEN),
     telegramWebhookSecret,
     allowedTelegramUserId,

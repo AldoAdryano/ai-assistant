@@ -97,8 +97,16 @@ describe("detectBriefingRequest", () => {
     expect(detectBriefingRequest("apa tugas saya?")).toBe(true);
     expect(detectBriefingRequest("tugas hari ini")).toBe(true);
   });
+  it("matches briefing with light filler and strips invisible chars", () => {
+    expect(detectBriefingRequest("briefing woi")).toBe(true);
+    expect(detectBriefingRequest("briefing dong")).toBe(true);
+    expect(detectBriefingRequest("briefing sekarang")).toBe(true);
+    expect(detectBriefingRequest("briefing\u200E")).toBe(true);
+    expect(detectBriefingRequest("*briefing*")).toBe(true);
+  });
   it("rejects unrelated chat", () => {
     expect(detectBriefingRequest("resep ayam goreng")).toBe(false);
     expect(detectBriefingRequest("besok")).toBe(false);
+    expect(detectBriefingRequest("briefing belanja kaos IKN")).toBe(false);
   });
 });

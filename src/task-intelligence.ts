@@ -84,8 +84,25 @@ export function mergeAlarmTaskLists(urgent: TaskRecord[], briefing: TaskRecord[]
 }
 
 export function detectBriefingRequest(userText: string): boolean {
-  const n = userText.toLowerCase().replace(/\s+/g, " ").trim();
-  return /^(briefing|ringkasin?\s+tugas|ringkas\s+tugas|apa\s+tugas\s+saya|daftar\s+tugas(?:\s+hari\s+ini)?|tugas\s+hari\s+ini)\??[!.,]*$/i.test(n);
+  const n = userText
+    .toLowerCase()
+    // WhatsApp / Unicode noise that breaks ^...$ anchors
+    .replace(/[\u200B-\u200F\uFEFF]/g, "")
+    .replace(/^\*+|\*+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (
+    /^(briefing|ringkasin?\s+tugas|ringkas\s+tugas|apa\s+tugas\s+saya|daftar\s+tugas(?:\s+hari\s+ini)?|tugas\s+hari\s+ini)\??[!.,]*$/i.test(
+      n,
+    )
+  ) {
+    return true;
+  }
+  // "briefing woi/dong/sekarang/tugas" — short imperative, not a long topic sentence
+  if (/^briefing(?:\s+(?:woi|dong|ya|yuk|please|tolong|sekarang|tugas|lagi)){1,3}\??[!.,]*$/i.test(n)) {
+    return true;
+  }
+  return false;
 }
 
 export function emptyBriefingReply(): string {

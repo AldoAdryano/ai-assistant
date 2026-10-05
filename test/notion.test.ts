@@ -64,29 +64,38 @@ it("creates a task with Notes rich_text from notes field", async () => {
 });
 
 it("Task 53: creates a task with sanitized title and correctly formatted datetime", async () => {
-  let bodyWithTime: any;
-  const fakeFetch: typeof fetch = async (_input, init) => { bodyWithTime = JSON.parse(String(init?.body)); return new Response(JSON.stringify({ id: "page-task" }), { status: 200 }); };
-  
-  await createTask(config, { task: "foo Konteks: Deadline jam 16:46", priority: "High", due_date: "2026-09-02", due_time: "16:46" }, fakeFetch);
-  
-  expect(bodyWithTime.properties.Task.title[0].text.content).toBe("foo");
-  expect(bodyWithTime.properties.Due.date.start).toBe("2026-09-02T16:46:00+07:00");
-  
-  // Task 55: Test with dot-separated time "18.08"
-  await createTask(config, { task: "bar", priority: "High", due_date: "2026-09-02", due_time: "18:08" }, fakeFetch);
-  // Expect it to resolve against nowWib (which isn't frozen, so we might need to mock or just expect it to include "T" and "+07:00")
-  expect(bodyWithTime.properties.Due.date.start).toContain("T");
-  expect(bodyWithTime.properties.Due.date.start).toContain("+07:00");
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-09-02T03:00:00Z")); // 2026-09-02 10:00 WIB
+  try {
+    let bodyWithTime: any;
+    const fakeFetch: typeof fetch = async (_input, init) => { bodyWithTime = JSON.parse(String(init?.body)); return new Response(JSON.stringify({ id: "page-task" }), { status: 200 }); };
+
+    await createTask(config, { task: "foo Konteks: Deadline jam 16:46", priority: "High", due_date: "2026-09-02", due_time: "16:46" }, fakeFetch);
+
+    expect(bodyWithTime.properties.Task.title[0].text.content).toBe("foo");
+    expect(bodyWithTime.properties.Due.date.start).toBe("2026-09-02T16:46:00+07:00");
+
+    await createTask(config, { task: "bar", priority: "High", due_date: "2026-09-02", due_time: "18:08" }, fakeFetch);
+    expect(bodyWithTime.properties.Due.date.start).toContain("T");
+    expect(bodyWithTime.properties.Due.date.start).toContain("+07:00");
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 it("Task 53: updates a task with sanitized title and correctly formatted datetime", async () => {
-  let bodyUpdate: any;
-  const fakeFetch: typeof fetch = async (_input, init) => { bodyUpdate = JSON.parse(String(init?.body)); return new Response(JSON.stringify({ id: "page-task" }), { status: 200 }); };
-  
-  await updateTask(config, "task-id", { due_date: "2026-09-02", due_time: "16:46" }, fakeFetch);
-  
-  // It only updates what's passed, so Due should be present
-  expect(bodyUpdate.properties.Due.date.start).toBe("2026-09-02T16:46:00+07:00");
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-09-02T03:00:00Z")); // 2026-09-02 10:00 WIB
+  try {
+    let bodyUpdate: any;
+    const fakeFetch: typeof fetch = async (_input, init) => { bodyUpdate = JSON.parse(String(init?.body)); return new Response(JSON.stringify({ id: "page-task" }), { status: 200 }); };
+
+    await updateTask(config, "task-id", { due_date: "2026-09-02", due_time: "16:46" }, fakeFetch);
+
+    expect(bodyUpdate.properties.Due.date.start).toBe("2026-09-02T16:46:00+07:00");
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 it("lists active tasks and sorts High before Medium before Low", async () => {

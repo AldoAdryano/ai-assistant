@@ -196,14 +196,13 @@ describe("Task 53: Normalization and Title Sanitation", () => {
     expect(normalizeNotionDue(null)).toBeUndefined();
     expect(normalizeNotionDue("")).toBeUndefined();
     
+    const ref = new Date("2026-09-02T10:00:00+07:00");
+
     // Date-only -> let it be
     expect(normalizeNotionDue("2026-09-02")).toBe("2026-09-02");
-    
-    // DateTime string -> enforce +07:00
-    expect(normalizeNotionDue("2026-09-02T16:46:00+07:00")).toBe("2026-09-02T16:46:00+07:00");
-    
-    // Natural strings with time -> ISO
-    const ref = new Date("2026-09-02T10:00:00+07:00");
+
+    // DateTime string -> enforce +07:00 (ref bulan sama agar Backend Guard lewat)
+    expect(normalizeNotionDue("2026-09-02T16:46:00+07:00", ref)).toBe("2026-09-02T16:46:00+07:00");
     expect(normalizeNotionDue("hari ini jam 17:11", ref)).toBe("2026-09-02T17:11:00+07:00");
     expect(normalizeNotionDue("besok jam 8 malam", ref)).toBe("2026-09-03T20:00:00+07:00");
     expect(normalizeNotionDue("selasa depan 09:30", ref)).toBe("2026-09-08T09:30:00+07:00");

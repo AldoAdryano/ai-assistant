@@ -5,7 +5,7 @@ import { NotionRejectionError, NotionUnknownError, createNote, createTask, listA
 const config: AppConfig = {
   geminiApiKey: "gemini-key", geminiModel: "gemini-3.5-flash-lite",
   notionApiKey: "notion-key", notionVersion: "2026-03-11", notionInboxDataSourceId: "inbox-ds", notionTasksDataSourceId: "tasks-ds", notionMemoryDataSourceId: "memory-ds",
-  telegramBotToken: "123456:test", telegramWebhookSecret: "secret_123", allowedTelegramUserId: "111111111", notionRoutineDbId: "r-db", notionProjectsDataSourceId: null, notionGoalsDataSourceId: null, notionLearningDataSourceId: null, whatsappApiSecret: "w-sec", allowedWhatsappNumber: "w-num", allowedWhatsappIdentities: ["w-num"],
+  telegramBotToken: "123456:test", telegramWebhookSecret: "secret_123", allowedTelegramUserId: "111111111", notionRoutineDbId: "r-db", notionProjectsDataSourceId: null, notionGoalsDataSourceId: null, notionLearningDataSourceId: null, notionFinanceDataSourceId: null, whatsappApiSecret: "w-sec", allowedWhatsappNumber: "w-num", allowedWhatsappIdentities: ["w-num"],
 };
 
 it("creates an Inbox page with a data_source_id parent", async () => {

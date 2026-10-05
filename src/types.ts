@@ -31,6 +31,7 @@ export interface Env {
   NOTION_PROJECTS_DATA_SOURCE_ID?: string;
   NOTION_GOALS_DATA_SOURCE_ID?: string;
   NOTION_LEARNING_DATA_SOURCE_ID?: string;
+  NOTION_FINANCE_DATA_SOURCE_ID?: string;
 
   GEMINI_MODEL: string;
   NOTION_VERSION: string;
@@ -55,6 +56,7 @@ export interface AppConfig {
   notionProjectsDataSourceId: string | null;
   notionGoalsDataSourceId: string | null;
   notionLearningDataSourceId: string | null;
+  notionFinanceDataSourceId: string | null;
   telegramBotToken: string;
   telegramWebhookSecret: string;
   allowedTelegramUserId: string;
@@ -127,6 +129,17 @@ export interface LearningRecord {
   target?: string | null;
   resource?: string | null;
   lastPracticed?: string | null;
+}
+
+export interface FinanceRecord {
+  id: string;
+  name: string;
+  amount: number;
+  currency: string;
+  type: "Expense" | "Income";
+  category: string;
+  date: string;
+  notes?: string | null;
 }
 
 export interface TaskRecord {

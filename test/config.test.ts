@@ -72,4 +72,19 @@ describe("getConfig Telegram migration bridge", () => {
         expect(isAllowedWhatsappSender("628111111111", "6288983776936,238035878838303@lid")).toBe(false);
         expect(parseAllowedWhatsappIdentities("6288983776936")).toEqual(["6288983776936"]);
     });
+
+    it("parses optional NOTION_FINANCE_DATA_SOURCE_ID correctly", () => {
+        const envWithFinance: Env = {
+            ...testEnv,
+            NOTION_FINANCE_DATA_SOURCE_ID: "finance-ds-123",
+        };
+        const config = getConfig(envWithFinance);
+        expect(config.notionFinanceDataSourceId).toBe("finance-ds-123");
+
+        const envWithoutFinance: Env = {
+            ...testEnv,
+            NOTION_FINANCE_DATA_SOURCE_ID: "   ",
+        };
+        expect(getConfig(envWithoutFinance).notionFinanceDataSourceId).toBeNull();
+    });
 });

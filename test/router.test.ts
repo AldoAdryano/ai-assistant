@@ -34,6 +34,8 @@ function deps(overrides: Partial<RouterDeps> = {}): RouterDeps {
     updateLearning: vi.fn(async () => undefined),
     archiveLearning: vi.fn(async () => undefined),
     addRoutine: vi.fn(async () => 'routine-id'),
+    createFinanceRecord: vi.fn(async () => ({ id: "finance-id" })) as any,
+    listFinanceRecords: vi.fn(async () => []) as any,
     generateChatReply: vi.fn(async () => ({ type: "text", text: "Jawaban AI" }) as any),
     parseIndonesianDeadline: vi.fn(() => ({ kind: "none" })) as any,
     parseIndonesianNaturalDate: vi.fn(() => null) as any,
@@ -656,6 +658,54 @@ describe("handleUserMessage (AI-Driven)", () => {
     const reply = await handleUserMessage(env, 123, config, { text: "Gagal terus" }, d);
     expect(reply).toContain("nge-lag");
     expect(reply).not.toContain("koneksi AI");
+  });
+
+  it("handles create_notion_finance tool call", async () => {
+    const d = deps({
+      generateChatReply: vi.fn()
+        .mockResolvedValueOnce({
+          type: "function_calls",
+          calls: [{
+            name: "create_notion_finance",
+            args: {
+              name: "Makan Siang",
+              amount: 25000,
+              currency: "IDR",
+              type: "Expense",
+              category: "Food",
+              date: "2026-10-05T12:00:00",
+              notes: "Kenyang"
+            }
+          }]
+        })
+        .mockResolvedValue({ type: "text", text: "Ok, sudah kucatat pengeluaran Makan Siang sebesar Rp25.000." }) as any,
+      createFinanceRecord: vi.fn(async () => ({ id: "finance-1" })) as any
+    });
+    const reply = await handleUserMessage(env, 123, config, { text: "Catat pengeluaran makan siang 25000" }, d);
+    expect(d.createFinanceRecord).toHaveBeenCalledWith(config, expect.objectContaining({
+      name: "Makan Siang",
+      amount: 25000,
+    }));
+    expect(reply).toContain("Rp25.000");
+  });
+
+  it("handles read_notion_finance tool call", async () => {
+    const d = deps({
+      generateChatReply: vi.fn()
+        .mockResolvedValueOnce({
+          type: "function_calls",
+          calls: [{ name: "read_notion_finance", args: { type: "Expense" } }]
+        })
+        .mockResolvedValue({ type: "text", text: "Ok, ini ringkasan pengeluaranmu." }) as any,
+      listFinanceRecords: vi.fn(async () => [
+        { name: "Makan", amount: 20000, type: "Expense", category: "Food" },
+        { name: "Transport", amount: 15000, type: "Expense", category: "Transport" },
+      ]) as any
+    });
+    const reply = await handleUserMessage(env, 123, config, { text: "Ringkasan pengeluaran" }, d);
+    expect(d.listFinanceRecords).toHaveBeenCalledWith(config, { type: "Expense" });
+    expect(reply).toContain("Ringkasan");
+    expect(reply).toContain("35000"); // Total 20000 + 15000
   });
 
   it("explicit ingat bahwa + create Identity upserts immediately without pending", async () => {

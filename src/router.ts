@@ -1,6 +1,6 @@
 import { generateChatReply, generateTaskBriefing, GeminiApiError } from "./gemini";
 import type { ChatReply } from "./gemini";
-import { NotionRejectionError, NotionUnknownError, createNote, createTask, listActiveTasks, listProjects, getAllTasks, getAllNotes, listMemoryContext, recallMemory, upsertMemory, getAllMemory, updateTask, archiveTask, archiveProject, createProject, updateProject, listGoals, createGoal, updateGoal, archiveGoal, listLearning, createLearning, updateLearning, archiveLearning, addRoutine } from "./notion";
+import { NotionRejectionError, NotionUnknownError, createNote, createTask, listActiveTasks, listProjects, getAllTasks, getAllNotes, listMemoryContext, recallMemory, upsertMemory, getAllMemory, updateTask, archiveTask, archiveProject, createProject, updateProject, listGoals, createGoal, updateGoal, archiveGoal, listLearning, createLearning, updateLearning, archiveLearning, addRoutine, createFinanceRecord, listFinanceRecords } from "./notion";
 import { detectBriefingRequest, selectBriefingTasks, emptyBriefingReply } from "./task-intelligence";
 import {
   getInteractionId,
@@ -47,6 +47,7 @@ export function sanitizeMarkdown(text: string): string {
 export interface RouterDeps {
   createNote: typeof createNote; createTask: typeof createTask; listActiveTasks: typeof listActiveTasks; listProjects: typeof listProjects; getAllTasks: typeof getAllTasks; getAllNotes: typeof getAllNotes;
   upsertMemory: typeof upsertMemory; recallMemory: typeof recallMemory; listMemoryContext: typeof listMemoryContext; getAllMemory: typeof getAllMemory; updateTask: typeof updateTask; archiveTask: typeof archiveTask; archiveProject: typeof archiveProject; createProject: typeof createProject; updateProject: typeof updateProject; listGoals: typeof listGoals; createGoal: typeof createGoal; updateGoal: typeof updateGoal; archiveGoal: typeof archiveGoal; listLearning: typeof listLearning; createLearning: typeof createLearning; updateLearning: typeof updateLearning; archiveLearning: typeof archiveLearning; addRoutine: typeof addRoutine;
+  createFinanceRecord: typeof createFinanceRecord; listFinanceRecords: typeof listFinanceRecords;
   generateChatReply: typeof generateChatReply;
   parseIndonesianDeadline: typeof parseIndonesianDeadline;
   parseIndonesianNaturalDate: typeof parseIndonesianNaturalDate;
@@ -61,6 +62,7 @@ export interface RouterDeps {
 }
 const defaultDeps: RouterDeps = {
   createNote, createTask, listActiveTasks, listProjects, getAllTasks, getAllNotes, upsertMemory, recallMemory, listMemoryContext, getAllMemory, updateTask, archiveTask, archiveProject, createProject, updateProject, listGoals, createGoal, updateGoal, archiveGoal, listLearning, createLearning, updateLearning, archiveLearning, addRoutine,
+  createFinanceRecord, listFinanceRecords,
   generateChatReply, parseIndonesianDeadline, parseIndonesianNaturalDate, getInteractionId, saveInteractionId, getChatLog, saveChatLog, clearMemory,
   getPendingDelete, savePendingDelete, clearPendingDelete, getPendingMemory, savePendingMemory, clearPendingMemory,
   getConversationContext, saveConversationContext, clearConversationContext,
@@ -203,6 +205,7 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
     const learningEnabled = Boolean(config.notionLearningDataSourceId);
     let learning: LearningRecord[] = [];
     let learningLoaded = false;
+    const financeEnabled = Boolean(config.notionFinanceDataSourceId);
 
     const [tasks, memories, previousInteractionId, chatLog, loadedProjects, loadedGoals, loadedLearning] = isGroup
       ? [[], [], null as string | null, await deps.getChatLog(env, userId), [] as ProjectRecord[], [] as GoalRecord[], [] as LearningRecord[]]
@@ -312,6 +315,7 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
               goalsEnabled: goalsEnabled && !isGroup,
               ...(learningEnabled && !isGroup ? { learning } : {}),
               learningEnabled: learningEnabled && !isGroup,
+              financeEnabled: financeEnabled && !isGroup,
               chatContext: isGroup ? "group" : "dm",
               conversation: isGroup ? null : conversationContext,
             },
@@ -526,6 +530,84 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
               case "create_routine": {
                 await deps.addRoutine(config, call.args.name, call.args.time);
                 replyMessages.push(`Rutinitas berhasil ditambahkan.`);
+                break;
+              }
+              case "create_notion_finance": {
+                const amount = Number(call.args.amount);
+                const currency = typeof call.args.currency === "string" && call.args.currency.trim() ? call.args.currency.trim() : "IDR";
+                const type = call.args.type === "Income" ? "Income" : "Expense";
+                const category = typeof call.args.category === "string" ? call.args.category : "Other";
+                const name = typeof call.args.name === "string" ? call.args.name : "Transaksi";
+                const date = typeof call.args.date === "string" ? call.args.date : new Date().toISOString();
+                const notes = typeof call.args.notes === "string" ? call.args.notes : null;
+                
+                await deps.createFinanceRecord(config, {
+                  name,
+                  amount,
+                  currency,
+                  type,
+                  category,
+                  date,
+                  notes,
+                });
+                
+                const formattedAmount = new Intl.NumberFormat("id-ID").format(amount);
+                const typeLabel = type === "Income" ? "pemasukan" : "pengeluaran";
+                replyMessages.push(`Catatan ${typeLabel} '${name}' sebesar ${currency === "IDR" ? "Rp" : currency + " "}${formattedAmount} sudah disimpan.`);
+                break;
+              }
+              case "read_notion_finance": {
+                const filterType = call.args.type === "Income" ? "Income" : call.args.type === "Expense" ? "Expense" : "All";
+                const filter: { startDate?: string; endDate?: string; type?: "Income" | "Expense" | "All"; category?: string } = {
+                  ...(typeof call.args.startDate === "string" ? { startDate: call.args.startDate } : {}),
+                  ...(typeof call.args.endDate === "string" ? { endDate: call.args.endDate } : {}),
+                  ...(filterType !== "All" ? { type: filterType } : {}),
+                  ...(typeof call.args.category === "string" ? { category: call.args.category } : {}),
+                };
+                const records = await deps.listFinanceRecords(config, filter);
+                if (records.length === 0) {
+                  replyMessages.push("Belum ada catatan keuangan yang sesuai.");
+                  break;
+                }
+                
+                let totalExpense = 0;
+                let totalIncome = 0;
+                const expenseByCategory: Record<string, number> = {};
+                const incomeByCategory: Record<string, number> = {};
+                
+                for (const r of records) {
+                  const amt = r.amount || 0;
+                  const cat = r.category || "Other";
+                  if (r.type === "Income") {
+                    totalIncome += amt;
+                    incomeByCategory[cat] = (incomeByCategory[cat] || 0) + amt;
+                  } else {
+                    totalExpense += amt;
+                    expenseByCategory[cat] = (expenseByCategory[cat] || 0) + amt;
+                  }
+                }
+                
+                const lines: string[] = ["*Ringkasan Keuangan:*"];
+                if (totalExpense > 0 || totalIncome === 0) {
+                  lines.push(`• Total Pengeluaran: Rp${new Intl.NumberFormat("id-ID").format(totalExpense)} (${totalExpense})`);
+                  const expCats = Object.entries(expenseByCategory);
+                  if (expCats.length > 0) {
+                    for (const [cat, sum] of expCats) {
+                      lines.push(`  - ${cat}: Rp${new Intl.NumberFormat("id-ID").format(sum)}`);
+                    }
+                  }
+                }
+                if (totalIncome > 0) {
+                  lines.push(`• Total Pemasukan: Rp${new Intl.NumberFormat("id-ID").format(totalIncome)} (${totalIncome})`);
+                  const incCats = Object.entries(incomeByCategory);
+                  if (incCats.length > 0) {
+                    for (const [cat, sum] of incCats) {
+                      lines.push(`  - ${cat}: Rp${new Intl.NumberFormat("id-ID").format(sum)}`);
+                    }
+                  }
+                }
+                
+                replyMessages.push(lines.join("\n"));
                 break;
               }
               case "list_notion_projects": {

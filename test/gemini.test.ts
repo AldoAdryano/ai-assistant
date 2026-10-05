@@ -564,3 +564,77 @@ it("logs sanitized diagnostic when Gemini API fails", async () => {
   expect(logArgs).not.toContain("secret_123");
   spy.mockRestore();
 });
+
+it("includes Finance CRUD tools when financeEnabled and not group", async () => {
+  let requestBody: any;
+  const fakeFetch: typeof fetch = async (_input, init) => {
+    requestBody = JSON.parse(String(init?.body));
+    return interaction("Siap.");
+  };
+  await generateChatReply(config, { text: "Catat pengeluaran 15000" }, {
+    tasks: [],
+    memories: [],
+    financeEnabled: true,
+  }, undefined, fakeFetch);
+
+  const toolNames = requestBody.tools[0].functionDeclarations.map((t: { name: string }) => t.name);
+  expect(toolNames).toContain("create_notion_finance");
+  expect(toolNames).toContain("read_notion_finance");
+
+  const create = requestBody.tools[0].functionDeclarations.find(
+    (t: { name: string }) => t.name === "create_notion_finance",
+  );
+  expect(create.parameters.required).toEqual(["name", "amount", "type", "category"]);
+  expect(create.parameters.properties).toMatchObject({
+    name: { type: "STRING" },
+    amount: { type: "NUMBER" },
+    type: { type: "STRING" },
+    category: { type: "STRING" },
+    currency: { type: "STRING" },
+    date: { type: "STRING" },
+    notes: { type: "STRING" },
+  });
+
+  const read = requestBody.tools[0].functionDeclarations.find(
+    (t: { name: string }) => t.name === "read_notion_finance",
+  );
+  expect(read.parameters.required).toEqual([]);
+  expect(read.parameters.properties).toMatchObject({
+    startDate: { type: "STRING" },
+    endDate: { type: "STRING" },
+    type: { type: "STRING" },
+    category: { type: "STRING" },
+  });
+});
+
+it("omits Finance tools when financeEnabled is false or absent", async () => {
+  let requestBody: any;
+  const fakeFetch: typeof fetch = async (_input, init) => {
+    requestBody = JSON.parse(String(init?.body));
+    return interaction("Siap.");
+  };
+  await generateChatReply(config, { text: "Catat pengeluaran" }, {
+    tasks: [],
+    memories: [],
+  }, undefined, fakeFetch);
+
+  const toolNames = requestBody.tools[0].functionDeclarations.map((t: { name: string }) => t.name);
+  expect(toolNames).not.toContain("create_notion_finance");
+  expect(toolNames).not.toContain("read_notion_finance");
+});
+
+it("omits Finance tools in group even when financeEnabled", async () => {
+  let requestBody: any;
+  const fakeFetch: typeof fetch = async (_input, init) => {
+    requestBody = JSON.parse(String(init?.body));
+    return interaction("Halo grup!");
+  };
+  await generateChatReply(config, { text: "Catat pengeluaran" }, {
+    tasks: [],
+    memories: [],
+    chatContext: "group",
+    financeEnabled: true,
+  }, undefined, fakeFetch);
+
+  expect(requestBody.tools).toBeUndefined();
+});

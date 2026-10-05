@@ -179,6 +179,7 @@ export async function generateChatReply(
     goalsEnabled?: boolean;
     learning?: LearningRecord[];
     learningEnabled?: boolean;
+    financeEnabled?: boolean;
     chatContext?: "dm" | "group";
     conversation?: ConversationContext | null;
   },
@@ -575,6 +576,41 @@ export async function generateChatReply(
             type: "OBJECT",
             properties: {
               status: { type: "STRING", description: "Optional Status filter (e.g. In progress)." },
+            },
+            required: []
+          }
+        },
+      ] : []),
+      ...(context.financeEnabled ? [
+        {
+          type: "function",
+          name: "create_notion_finance",
+          description: "Creates a new financial transaction record (Expense or Income) in Notion Finance.",
+          parameters: {
+            type: "OBJECT",
+            properties: {
+              name: { type: "STRING", description: "Deskripsi singkat transaksi, misal: 'Makan Nasi Padang'." },
+              amount: { type: "NUMBER", description: "Nominal angka positif tanpa simbol mata uang, misal: 15000." },
+              type: { type: "STRING", enum: ["Expense", "Income"], description: "Jenis transaksi: Expense (Pengeluaran) atau Income (Pemasukan)." },
+              category: { type: "STRING", enum: ["Food", "Transport", "Bills", "Shopping", "Client/Project", "Other"], description: "Kategori transaksi." },
+              currency: { type: "STRING", description: "Mata uang, default IDR." },
+              date: { type: "STRING", description: "Waktu transaksi dalam format ISO DateTime +07:00." },
+              notes: { type: "STRING", description: "Catatan tambahan." },
+            },
+            required: ["name", "amount", "type", "category"]
+          }
+        },
+        {
+          type: "function",
+          name: "read_notion_finance",
+          description: "Reads and returns financial records or summary from Notion Finance. Use when Aldo asks about pengeluaran, pemasukan, or laporan keuangan.",
+          parameters: {
+            type: "OBJECT",
+            properties: {
+              startDate: { type: "STRING", description: "Filter tanggal awal (YYYY-MM-DD)." },
+              endDate: { type: "STRING", description: "Filter tanggal akhir (YYYY-MM-DD)." },
+              type: { type: "STRING", enum: ["Expense", "Income", "All"], description: "Filter tipe transaksi." },
+              category: { type: "STRING", description: "Filter kategori tertentu." },
             },
             required: []
           }

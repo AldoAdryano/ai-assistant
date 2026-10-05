@@ -40,7 +40,7 @@ npm run typecheck; TC=$?
 echo "==> test"
 npm test; TEST=$?
 
-cat <<'EOF'
+cat <<EOF
 
 === Langkah manual selanjutnya ===
 1. Login Cloudflare:

@@ -343,10 +343,14 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
 
           if (attempt < maxAttempts) {
             // Skip sleep in unit tests (Vitest / NODE_ENV=test)
+            const g = globalThis as {
+              process?: { env?: Record<string, string | undefined> };
+              __vitest_worker__?: unknown;
+            };
             const inTest =
-              process.env.VITEST === "true" ||
-              process.env.NODE_ENV === "test" ||
-              typeof (globalThis as { __vitest_worker__?: unknown }).__vitest_worker__ !== "undefined";
+              g.process?.env?.VITEST === "true" ||
+              g.process?.env?.NODE_ENV === "test" ||
+              typeof g.__vitest_worker__ !== "undefined";
             const delay = inTest
               ? 0
               : Math.min(800 * Math.pow(1.6, attempt - 1), 5000) + Math.floor(Math.random() * 400);

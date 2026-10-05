@@ -35,10 +35,24 @@ echo "==> npm install (whatsapp-bridge)"
 if ! (cd whatsapp-bridge && npm install); then echo "Gagal: npm install bridge"; exit 1; fi
 
 # 4. Verifikasi (kegagalan tidak menghentikan langkah manual)
+# workerd (dipakai vitest & wrangler dev) butuh glibc >= 2.35; Ubuntu 20.04 = 2.31.
+# Jika host tak mampu menjalankan workerd, verifikasi dialihkan ke container node:22.
 echo "==> typecheck"
 npm run typecheck; TC=$?
 echo "==> test"
-npm test; TEST=$?
+if node -e "process.exit(0)" 2>/dev/null \
+  && node_modules/@cloudflare/workerd-linux-64/bin/workerd --version >/dev/null 2>&1; then
+  npm test; TEST=$?
+elif command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+  echo "Host (glibc 2.31) tidak menjalankan workerd -> test via Docker node:22"
+  bash test-docker.sh; TEST=$?
+else
+  echo "workerd tidak jalan di host dan Docker tidak bisa diakses."
+  echo "  - Docker belum ada : sudo apt install -y docker.io"
+  echo "  - Belum dapat grup : sudo usermod -aG docker \$USER (lalu log in ulang)"
+  echo "Setelah itu jalankan: bash test-docker.sh"
+  TEST=1
+fi
 
 cat <<EOF
 
@@ -49,8 +63,9 @@ cat <<EOF
 2. Pastikan secret sudah ada (sudah tersimpan di server, TIDAK perlu diisi ulang):
      npx wrangler secret list
 3. Jalankan worker:
-     npm run dev            (uji lokal)
-     atau npm run deploy    (deploy dari Ubuntu)
+     npm run deploy    (deploy dari Ubuntu — perintah ini tidak butuh workerd lokal)
+   Uji lokal (wrangler dev) butuh workerd, jalankan via Docker:
+     docker run --rm -it -v "\$PWD":/app -w /app -p 8787:8787 node:22-bookworm npm run dev
 4. Bridge WhatsApp:
      cd whatsapp-bridge && node index.js
    Session disalin dari Windows; kalau WhatsApp menolak, scan QR di terminal.

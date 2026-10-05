@@ -1,4 +1,4 @@
-import type { AppConfig, GoalRecord, LearningRecord, MemoryCategory, MemoryRecord, NoteType, Priority, ProjectRecord, RoutineRecord, TaskRecord } from "./types";
+import type { AppConfig, FinanceRecord, GoalRecord, LearningRecord, MemoryCategory, MemoryRecord, NoteType, Priority, ProjectRecord, RoutineRecord, TaskRecord } from "./types";
 import { normalizeNotionDue, stripDeadlineLeakFromTitle, nowWib, getJakartaDateParts } from "./date";
 
 export const TASK_PROJECT_PROPERTY = "Project";
@@ -8,6 +8,8 @@ const GOALS_PAGE_SIZE = 100;
 const GOALS_MAX_ITEMS = 300;
 const LEARNING_PAGE_SIZE = 100;
 const LEARNING_MAX_ITEMS = 300;
+const FINANCE_PAGE_SIZE = 100;
+const FINANCE_MAX_ITEMS = 300;
 
 export class NotionRejectionError extends Error {
   constructor(message: string) {
@@ -838,4 +840,133 @@ export async function addRoutine(config: AppConfig, name: string, timeText: stri
     body: JSON.stringify({ parent: { type: "data_source_id", data_source_id: config.notionRoutineDbId }, properties }),
   }, fetchImpl);
   return result.id;
+}
+
+function mapFinanceRecord(page: any): FinanceRecord | null {
+  const name = titleText(page.properties?.Name);
+  const amount = page.properties?.Amount?.number;
+  const currency = page.properties?.Currency?.select?.name;
+  const type = page.properties?.Type?.select?.name;
+  const category = page.properties?.Category?.select?.name;
+  const date = page.properties?.Date?.date?.start;
+  const notes = richText(page.properties?.Notes) || undefined;
+
+  if (!name || typeof amount !== "number" || !currency || !type || !category || !date) {
+    return null;
+  }
+
+  return {
+    id: page.id,
+    name,
+    amount,
+    currency,
+    type: type as "Expense" | "Income",
+    category,
+    date,
+    ...(notes ? { notes } : {}),
+  };
+}
+
+export async function createFinanceRecord(
+  config: AppConfig,
+  payload: Omit<FinanceRecord, "id">,
+  fetchImpl: typeof fetch = fetch,
+): Promise<FinanceRecord> {
+  if (!config.notionFinanceDataSourceId) {
+    throw new NotionRejectionError("Finance data source is not configured");
+  }
+
+  const normDate = normalizeNotionDue(payload.date) ?? payload.date;
+  const properties: Record<string, unknown> = {
+    Name: { title: textItems(payload.name) },
+    Amount: { number: payload.amount },
+    Currency: { select: { name: payload.currency } },
+    Type: { select: { name: payload.type } },
+    Category: { select: { name: payload.category } },
+    Date: { date: { start: normDate } },
+  };
+
+  if (payload.notes) {
+    properties.Notes = { rich_text: textItems(payload.notes) };
+  }
+
+  const result = await notionRequest<any>(
+    config,
+    "/pages",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        parent: { type: "data_source_id", data_source_id: config.notionFinanceDataSourceId },
+        properties,
+      }),
+    },
+    fetchImpl,
+  );
+
+  return mapFinanceRecord(result) ?? {
+    id: result.id,
+    name: payload.name,
+    amount: payload.amount,
+    currency: payload.currency,
+    type: payload.type,
+    category: payload.category,
+    date: payload.date,
+    ...(payload.notes ? { notes: payload.notes } : {}),
+  };
+}
+
+export async function listFinanceRecords(
+  config: AppConfig,
+  filter?: { startDate?: string; endDate?: string; type?: "Expense" | "Income" | "All"; category?: string },
+  fetchImpl: typeof fetch = fetch,
+): Promise<FinanceRecord[]> {
+  if (!config.notionFinanceDataSourceId) return [];
+
+  const filterConditions: any[] = [];
+  if (filter?.startDate) {
+    filterConditions.push({ property: "Date", date: { on_or_after: filter.startDate } });
+  }
+  if (filter?.endDate) {
+    filterConditions.push({ property: "Date", date: { on_or_before: filter.endDate } });
+  }
+  if (filter?.type && filter.type !== "All") {
+    filterConditions.push({ property: "Type", select: { equals: filter.type } });
+  }
+  if (filter?.category) {
+    filterConditions.push({ property: "Category", select: { equals: filter.category } });
+  }
+
+  const pages: any[] = [];
+  let startCursor: string | undefined;
+  let hasMore = true;
+
+  while (hasMore && pages.length < FINANCE_MAX_ITEMS) {
+    const body: Record<string, unknown> = { page_size: FINANCE_PAGE_SIZE };
+    if (filterConditions.length === 1) {
+      body.filter = filterConditions[0];
+    } else if (filterConditions.length > 1) {
+      body.filter = { and: filterConditions };
+    }
+    if (startCursor) body.start_cursor = startCursor;
+
+    const result = await notionRequest<{
+      results: any[];
+      next_cursor: string | null;
+      has_more: boolean;
+    }>(
+      config,
+      `/data_sources/${config.notionFinanceDataSourceId}/query`,
+      { method: "POST", body: JSON.stringify(body) },
+      fetchImpl,
+    );
+
+    pages.push(...result.results ?? []);
+    hasMore = Boolean(result.has_more) && Boolean(result.next_cursor);
+    startCursor = result.next_cursor ?? undefined;
+  }
+
+  return pages
+    .slice(0, FINANCE_MAX_ITEMS)
+    .map(mapFinanceRecord)
+    .filter((record): record is FinanceRecord => record !== null);
 }

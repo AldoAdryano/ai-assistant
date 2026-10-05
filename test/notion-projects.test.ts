@@ -26,6 +26,7 @@ const baseConfig: AppConfig = {
   notionRoutineDbId: "r-db",
   notionProjectsDataSourceId: null,
   notionGoalsDataSourceId: null,
+  notionLearningDataSourceId: null,
   whatsappApiSecret: "w-sec",
   allowedWhatsappNumber: "w-num",
   allowedWhatsappIdentities: ["w-num"],

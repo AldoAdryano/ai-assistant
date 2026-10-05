@@ -25,7 +25,7 @@ function createMockKv() {
 const samplePending: PendingMemory = {
   key: "allergies",
   value: "peanut",
-  category: "Health",
+  category: "Other",
   createdAt: 1_700_000_000_000,
 };
 

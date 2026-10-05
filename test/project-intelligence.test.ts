@@ -46,7 +46,6 @@ describe("formatProjectList", () => {
         area: null,
         goalName: "",
         status: null,
-        deadline: undefined,
       }),
     ]);
     expect(line).toBe("• Solo");

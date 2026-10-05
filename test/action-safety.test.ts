@@ -44,7 +44,7 @@ describe("filterCreateTaskCalls", () => {
   });
 
   it("allows single create", () => {
-    const r = filterCreateTaskCalls([four[0]], "buat tugas laprak deadline besok");
+    const r = filterCreateTaskCalls(four.slice(0, 1), "buat tugas laprak deadline besok");
     expect(r.allowed).toHaveLength(1);
     expect(r.blocked).toBe(false);
   });

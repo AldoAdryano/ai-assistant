@@ -580,6 +580,7 @@ it("includes Finance CRUD tools when financeEnabled and not group", async () => 
   const toolNames = requestBody.tools[0].functionDeclarations.map((t: { name: string }) => t.name);
   expect(toolNames).toContain("create_notion_finance");
   expect(toolNames).toContain("read_notion_finance");
+  expect(toolNames).toContain("delete_notion_finance");
 
   const create = requestBody.tools[0].functionDeclarations.find(
     (t: { name: string }) => t.name === "create_notion_finance",

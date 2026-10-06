@@ -1,7 +1,8 @@
+import { currentWibWeekRange } from "./date";
 import type { MemoryCategory } from "./types";
 
 export type PendingDelete = {
-  kind: "tasks" | "notes" | "memory" | "project" | "goal" | "learning";
+  kind: "tasks" | "notes" | "memory" | "project" | "goal" | "learning" | "finance";
   ids: string[];
   summary: string;
   createdAt: number;
@@ -80,11 +81,64 @@ export function isPositiveDeleteConfirm(userText: string): boolean {
   ) {
     return true;
   }
-  // Short "ya …" / "iya …" / "yakin …" — not long unrelated messages
-  if (/^(ya|iya|iyalah|iyah|yakin)\b/i.test(text) && text.length < 40) {
+  // Short "ya …" / "iyaa …" / "yakin …" — not long unrelated messages
+  if (/^(ya+|iya+|iyalah|iyah|yakin)\b/i.test(text) && text.length < 40) {
     return true;
   }
   return false;
+}
+
+const FINANCE_WORD = /\b(pengeluaran|pemasukan|keuangan|transaksi)\b/;
+const FINANCE_DELETE_WORD = /\b(hapus|hapusin|bersihin|reset|buang)\b/;
+
+export function requestsFinanceDelete(text: string): boolean {
+  const t = text.toLowerCase();
+  return FINANCE_DELETE_WORD.test(t) && FINANCE_WORD.test(t);
+}
+
+/** A bare "ya"/"iyaa serius" should not start a new notes/tasks delete. */
+export function affirmsWithoutNewTarget(text: string): boolean {
+  return isPositiveDeleteConfirm(text) && !/\b(catatan|tugas|memori|inbox|project|goal|skill)\b/i.test(text);
+}
+
+export function inferFinanceDeleteFilter(
+  text: string,
+  now: Date = new Date(),
+): { startDate?: string; endDate?: string; type?: "Expense" | "Income" } | null {
+  if (!requestsFinanceDelete(text)) return null;
+  const t = text.toLowerCase();
+  const filter: { startDate?: string; endDate?: string; type?: "Expense" | "Income" } = {};
+  const expense = /\bpengeluaran\b/.test(t);
+  const income = /\bpemasukan\b/.test(t);
+  if (expense && !income) filter.type = "Expense";
+  else if (income && !expense) filter.type = "Income";
+  if (/\bminggu ini\b/.test(t)) {
+    const week = currentWibWeekRange(now);
+    filter.startDate = week.startDate;
+    filter.endDate = week.endDate;
+  }
+  if (!filter.type && !filter.startDate) return null;
+  return filter;
+}
+
+export function previousLoggedUserText(log: string): string | null {
+  const lines = log.split("\n").filter((line) => line.startsWith("User: "));
+  if (lines.length < 2) return null;
+  return lines[lines.length - 2]!.slice("User: ".length);
+}
+
+function repeatsFinanceDelete(text: string): boolean {
+  const t = text.toLowerCase();
+  return FINANCE_DELETE_WORD.test(t) && !/\b(catatan|tugas|memori|inbox|project|goal|skill)\b/i.test(t);
+}
+
+/** Text that should select finance rows, including a follow-up that only says hapus again. */
+export function financeDeleteSourceText(currentText: string, conversationLog: string): string | null {
+  if (requestsFinanceDelete(currentText)) return currentText;
+  const previous = previousLoggedUserText(conversationLog);
+  if (!previous || !requestsFinanceDelete(previous)) return null;
+  if (affirmsWithoutNewTarget(currentText) || repeatsFinanceDelete(currentText)) return previous;
+  return null;
 }
 
 export function isNegativeDeleteConfirm(userText: string): boolean {

@@ -915,6 +915,13 @@ export async function createFinanceRecord(
   };
 }
 
+export async function archiveFinanceRecord(config: AppConfig, pageId: string, fetchImpl: typeof fetch = fetch): Promise<void> {
+  if (!config.notionFinanceDataSourceId) {
+    throw new NotionRejectionError("Finance data source is not configured");
+  }
+  await notionRequest(config, `/blocks/${pageId}`, { method: "DELETE" }, fetchImpl);
+}
+
 export async function listFinanceRecords(
   config: AppConfig,
   filter?: { startDate?: string; endDate?: string; type?: "Expense" | "Income" | "All"; category?: string },

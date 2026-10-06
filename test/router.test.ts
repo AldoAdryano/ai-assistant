@@ -38,6 +38,7 @@ function deps(overrides: Partial<RouterDeps> = {}): RouterDeps {
     addRoutine: vi.fn(async () => 'routine-id'),
     createFinanceRecord: vi.fn(async () => ({ id: "finance-id" })) as any,
     listFinanceRecords: vi.fn(async () => []) as any,
+    archiveFinanceRecord: vi.fn(async () => undefined),
     generateChatReply: vi.fn(async () => ({ type: "text", text: "Jawaban AI" }) as any),
     parseIndonesianDeadline: vi.fn(() => ({ kind: "none" })) as any,
     parseIndonesianNaturalDate: vi.fn(() => null) as any,
@@ -69,6 +70,23 @@ describe("handleUserMessage (AI-Driven)", () => {
     const reply = await handleUserMessage(env, 123, config, { text: "/start" }, d);
     expect(reply).toContain("Perintah V1 (AI-Driven):");
     expect(d.generateChatReply).not.toHaveBeenCalled();
+  });
+
+  it("sets the deadline on the task Youyou just asked about", async () => {
+    const d = deps({
+      getChatLog: vi.fn(async () => "User: Tambah tugas revisi bab 2\nBot: Tugas 'Revisi bab 2' sudah ditambahkan dengan prioritas Medium. Tenggatnya kapan, Aldo?"),
+      listActiveTasks: vi.fn(async () => [{ id: "task-1", task: "Revisi bab 2", status: "To Do" as const, priority: "Medium" as const }]),
+      updateTask: vi.fn(async () => undefined),
+    });
+    const reply = await handleUserMessage(env, 123, config, { text: "Besok pagi" }, d);
+    expect(d.generateChatReply).not.toHaveBeenCalled();
+    expect(d.updateTask).toHaveBeenCalledWith(config, "task-1", expect.objectContaining({
+      due_date: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+    }));
+    const due = (d.updateTask as any).mock.calls[0][2].due_date as string;
+    expect(due).not.toContain("pagi");
+    expect(reply).toContain("Revisi bab 2");
+    expect(reply).toContain(due);
   });
 
   it("handles standard text reply from Gemini", async () => {
@@ -711,6 +729,98 @@ describe("handleUserMessage (AI-Driven)", () => {
     expect(d.listFinanceRecords).toHaveBeenCalledWith(config, { type: "Expense" });
     expect(reply).toContain("Ringkasan");
     expect(reply).toContain("35000"); // Total 20000 + 15000
+  });
+
+  it("deletes matching finance rows, not inbox notes, when asked to hapus pengeluaran", async () => {
+    const financeConfig = { notionFinanceDataSourceId: "fin-1" } as AppConfig;
+    const d = deps({
+      generateChatReply: vi.fn().mockResolvedValueOnce({
+        type: "function_calls",
+        calls: [{ name: "delete_notion_notes", args: { keywords: ["semua", "malam", "kuliah"] } }],
+      }) as any,
+      getAllNotes: vi.fn(async () => [
+        { id: "n1", title: "Sedih dan susah tidur malam-malam" },
+        { id: "n2", title: "Youyou bisa diakses semua orang tapi terbatas" },
+        { id: "n3", title: "Rutinitas: Berangkat kuliah jam 09:38" },
+      ]),
+      listFinanceRecords: vi.fn(async () => [
+        { id: "f1", name: "Makan Siang", amount: 15000, currency: "IDR", type: "Expense", category: "Food", date: "2026-10-06T12:00:00+07:00" },
+      ]) as any,
+    });
+    const reply = await handleUserMessage(env, 123, financeConfig, { text: "hapus semua pengeluaran minggu ini" }, d);
+    expect(d.getAllNotes).not.toHaveBeenCalled();
+    expect(d.savePendingDelete).toHaveBeenCalledWith(env, 123, expect.objectContaining({
+      kind: "finance",
+      ids: ["f1"],
+    }));
+    expect(reply).toContain("Makan Siang");
+    expect(reply).not.toContain("Sedih");
+    expect(reply).not.toContain("Ringkasan Keuangan");
+    expect(d.generateChatReply).not.toHaveBeenCalled();
+  });
+
+  it("repeats a finance delete instead of summarizing when the user says hapus again", async () => {
+    const financeConfig = { notionFinanceDataSourceId: "fin-1" } as AppConfig;
+    const d = deps({
+      getChatLog: vi.fn(async () => "User: Hapus semua pengeluaran minggu ini\nBot: *Ringkasan Keuangan:*"),
+      generateChatReply: vi.fn().mockResolvedValueOnce({
+        type: "function_calls",
+        calls: [{ name: "read_notion_finance", args: { type: "All" } }],
+      }) as any,
+      listFinanceRecords: vi.fn(async () => [
+        { id: "f1", name: "Makan Siang", amount: 15000, currency: "IDR", type: "Expense", category: "Food", date: "2026-10-06T12:00:00+07:00" },
+      ]) as any,
+    });
+    const reply = await handleUserMessage(env, 123, financeConfig, { text: "Hapus, kok malah ringkasan" }, d);
+    expect(d.generateChatReply).not.toHaveBeenCalled();
+    expect(d.savePendingDelete).toHaveBeenCalledWith(env, 123, expect.objectContaining({
+      kind: "finance",
+      ids: ["f1"],
+    }));
+    expect(reply).toContain("catatan keuangan");
+    expect(reply).not.toContain("Ringkasan Keuangan");
+  });
+
+  it("treats Iyaa serius after a finance-delete request as finance confirm setup, not note delete", async () => {
+    const financeConfig = { notionFinanceDataSourceId: "fin-1" } as AppConfig;
+    const d = deps({
+      getChatLog: vi.fn(async () => "User: hapus semua pengeluaran minggu ini\nBot: konfirmasi dulu"),
+      generateChatReply: vi.fn().mockResolvedValueOnce({
+        type: "function_calls",
+        calls: [{ name: "delete_notion_notes", args: { keywords: ["semua", "malam"] } }],
+      }) as any,
+      getAllNotes: vi.fn(async () => [
+        { id: "n1", title: "Sedih dan susah tidur malam-malam" },
+      ]),
+      listFinanceRecords: vi.fn(async () => [
+        { id: "f1", name: "Listrik", amount: 150000, currency: "IDR", type: "Expense", category: "Bills", date: "2026-10-05T22:00:00+07:00" },
+      ]) as any,
+    });
+    const reply = await handleUserMessage(env, 123, financeConfig, { text: "Iyaa serius" }, d);
+    expect(d.getAllNotes).not.toHaveBeenCalled();
+    expect(d.savePendingDelete).toHaveBeenCalledWith(env, 123, expect.objectContaining({
+      kind: "finance",
+      ids: ["f1"],
+    }));
+    expect(reply).toContain("Listrik");
+    expect(reply).not.toContain("Sedih");
+  });
+
+  it("archives finance pages when Iyaa serius confirms a pending finance delete", async () => {
+    const financeConfig = { notionFinanceDataSourceId: "fin-1" } as AppConfig;
+    const d = deps({
+      getPendingDelete: vi.fn(async () => ({
+        kind: "finance" as const,
+        ids: ["f1"],
+        summary: "Makan Siang",
+        createdAt: Date.now(),
+      })),
+      archiveFinanceRecord: vi.fn(async () => undefined),
+    });
+    const reply = await handleUserMessage(env, 123, financeConfig, { text: "Iyaa serius" }, d);
+    expect(d.archiveFinanceRecord).toHaveBeenCalledWith(financeConfig, "f1");
+    expect(d.archiveTask).not.toHaveBeenCalled();
+    expect(reply).toContain("Berhasil menghapus 1");
   });
 
   it("explicit ingat bahwa + create Identity upserts immediately without pending", async () => {

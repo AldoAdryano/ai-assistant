@@ -1,6 +1,6 @@
 import { generateChatReply, generateTaskBriefing, GeminiApiError } from "./gemini";
 import type { ChatReply } from "./gemini";
-import { NotionRejectionError, NotionUnknownError, createNote, createTask, listActiveTasks, listProjects, getAllTasks, getAllNotes, listMemoryContext, recallMemory, upsertMemory, getAllMemory, updateTask, archiveTask, archiveProject, createProject, updateProject, listGoals, createGoal, updateGoal, archiveGoal, listLearning, createLearning, updateLearning, archiveLearning, addRoutine, createFinanceRecord, listFinanceRecords } from "./notion";
+import { NotionRejectionError, NotionUnknownError, createNote, createTask, listActiveTasks, listProjects, getAllTasks, getAllNotes, listMemoryContext, recallMemory, upsertMemory, getAllMemory, updateTask, archiveTask, archiveProject, createProject, updateProject, listGoals, createGoal, updateGoal, archiveGoal, listLearning, createLearning, updateLearning, archiveLearning, addRoutine, createFinanceRecord, listFinanceRecords, archiveFinanceRecord } from "./notion";
 import { detectBriefingRequest, selectBriefingTasks, emptyBriefingReply } from "./task-intelligence";
 import {
   getInteractionId,
@@ -32,10 +32,12 @@ import {
   isNegativeDeleteConfirm,
   shouldConfirmMemoryWrite,
   stripInventedDueDate,
+  financeDeleteSourceText,
+  inferFinanceDeleteFilter,
 } from "./action-safety";
 import type { PendingDelete, PendingMemory } from "./action-safety";
 import { applyTopicSwitch, detectExplicitTopicSwitch, type ConversationContext } from "./conversation-context";
-import { parseIndonesianDeadline, parseIndonesianNaturalDate, formatISOWithOffset, nowWib } from "./date";
+import { parseIndonesianDeadline, parseIndonesianNaturalDate, parseDeadlineReply, formatISOWithOffset, nowWib } from "./date";
 import { extractProjectMention, findExactProject, matchProject } from "./project-match";
 import { formatProjectList, formatProjectStatus } from "./project-intelligence";
 import { findExactGoal, matchGoal } from "./goal-match";
@@ -51,7 +53,7 @@ export function sanitizeMarkdown(text: string): string {
 export interface RouterDeps {
   createNote: typeof createNote; createTask: typeof createTask; listActiveTasks: typeof listActiveTasks; listProjects: typeof listProjects; getAllTasks: typeof getAllTasks; getAllNotes: typeof getAllNotes;
   upsertMemory: typeof upsertMemory; recallMemory: typeof recallMemory; listMemoryContext: typeof listMemoryContext; getAllMemory: typeof getAllMemory; updateTask: typeof updateTask; archiveTask: typeof archiveTask; archiveProject: typeof archiveProject; createProject: typeof createProject; updateProject: typeof updateProject; listGoals: typeof listGoals; createGoal: typeof createGoal; updateGoal: typeof updateGoal; archiveGoal: typeof archiveGoal; listLearning: typeof listLearning; createLearning: typeof createLearning; updateLearning: typeof updateLearning; archiveLearning: typeof archiveLearning; addRoutine: typeof addRoutine;
-  createFinanceRecord: typeof createFinanceRecord; listFinanceRecords: typeof listFinanceRecords;
+  createFinanceRecord: typeof createFinanceRecord; listFinanceRecords: typeof listFinanceRecords; archiveFinanceRecord: typeof archiveFinanceRecord;
   generateChatReply: typeof generateChatReply;
   parseIndonesianDeadline: typeof parseIndonesianDeadline;
   parseIndonesianNaturalDate: typeof parseIndonesianNaturalDate;
@@ -67,7 +69,7 @@ export interface RouterDeps {
 }
 const defaultDeps: RouterDeps = {
   createNote, createTask, listActiveTasks, listProjects, getAllTasks, getAllNotes, upsertMemory, recallMemory, listMemoryContext, getAllMemory, updateTask, archiveTask, archiveProject, createProject, updateProject, listGoals, createGoal, updateGoal, archiveGoal, listLearning, createLearning, updateLearning, archiveLearning, addRoutine,
-  createFinanceRecord, listFinanceRecords,
+  createFinanceRecord, listFinanceRecords, archiveFinanceRecord,
   generateChatReply, parseIndonesianDeadline, parseIndonesianNaturalDate, getInteractionId, saveInteractionId, getChatLog, saveChatLog, clearMemory,
   getPendingDelete, savePendingDelete, clearPendingDelete, getPendingMemory, savePendingMemory, clearPendingMemory,
   getPendingTaskPlan, savePendingTaskPlan, clearPendingTaskPlan,
@@ -83,6 +85,7 @@ const DELETE_TOOL_NAMES = new Set([
   "delete_notion_project",
   "delete_notion_goal",
   "delete_notion_learning",
+  "delete_notion_finance",
 ]);
 
 function deleteKindLabel(kind: PendingDelete["kind"]): string {
@@ -91,7 +94,49 @@ function deleteKindLabel(kind: PendingDelete["kind"]): string {
   if (kind === "project") return "project";
   if (kind === "goal") return "goal";
   if (kind === "learning") return "skill";
+  if (kind === "finance") return "catatan keuangan";
   return "tugas";
+}
+
+async function proposeFinanceDelete(
+  env: Env,
+  userId: number | string,
+  config: AppConfig,
+  deps: RouterDeps,
+  sourceText: string,
+  args: { startDate?: unknown; endDate?: unknown; type?: unknown; category?: unknown },
+): Promise<{ message: string; saved: boolean }> {
+  if (!config.notionFinanceDataSourceId) {
+    return { message: "Finance belum dikonfigurasi. Tidak ada yang dihapus.", saved: false };
+  }
+  const inferred = inferFinanceDeleteFilter(sourceText, new Date());
+  const type = args.type === "Income" || args.type === "Expense" ? args.type : inferred?.type;
+  const startDate = typeof args.startDate === "string" && args.startDate.trim() ? args.startDate.trim() : inferred?.startDate;
+  const endDate = typeof args.endDate === "string" && args.endDate.trim() ? args.endDate.trim() : inferred?.endDate;
+  const category = typeof args.category === "string" && args.category.trim() ? args.category.trim() : undefined;
+  if (!type && !startDate && !endDate && !category) {
+    return { message: "Sebut dulu catatan keuangan yang mana, misalnya pengeluaran minggu ini.", saved: false };
+  }
+  const records = await deps.listFinanceRecords(config, {
+    ...(startDate ? { startDate } : {}),
+    ...(endDate ? { endDate } : {}),
+    ...(type ? { type } : {}),
+    ...(category ? { category } : {}),
+  });
+  if (records.length === 0) {
+    return { message: "Tidak ada catatan keuangan yang cocok untuk dihapus.", saved: false };
+  }
+  const summary = buildDeleteTitleSummary(records.map((record) => record.name));
+  await deps.savePendingDelete(env, userId, {
+    kind: "finance",
+    ids: records.map((record) => record.id),
+    summary,
+    createdAt: Date.now(),
+  });
+  return {
+    message: `Aldo, aku nemu ${records.length} catatan keuangan buat dihapus: ${summary}. Yakin? Balas "ya" atau "jangan".`,
+    saved: true,
+  };
 }
 
 /** Bridge may append `\n\n[Bridge: media…]` for sticker context — strip for phrase routing. */
@@ -135,6 +180,10 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
             await deps.clearPendingDelete(env, userId);
             return "Learning belum dikonfigurasi.";
           }
+          if (pending.kind === "finance" && !config.notionFinanceDataSourceId) {
+            await deps.clearPendingDelete(env, userId);
+            return "Finance belum dikonfigurasi.";
+          }
           let successCount = 0;
           let failCount = 0;
           for (const id of pending.ids) {
@@ -142,6 +191,7 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
               if (pending.kind === "goal") await deps.archiveGoal(config, id);
               else if (pending.kind === "project") await deps.archiveProject(config, id);
               else if (pending.kind === "learning") await deps.archiveLearning(config, id);
+              else if (pending.kind === "finance") await deps.archiveFinanceRecord(config, id);
               else await deps.archiveTask(config, id);
               successCount++;
             } catch {
@@ -330,6 +380,33 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
     let currentInput = `CONVERSATION HISTORY:\n${currentLog}\n\n[ACTION REQUIRED] Respond to the latest User message.`;
     let currentPreviousId = previousInteractionId;
     
+    if (!isGroup) {
+      const bots = currentLog.split("\n").filter((line) => line.startsWith("Bot: "));
+      const lastBot = bots[bots.length - 1] ?? "";
+      const titleMatch = /Tenggatnya kapan/i.test(lastBot)
+        ? lastBot.match(/Tugas '([^']+)' sudah ditambahkan/)
+        : null;
+      const due = titleMatch?.[1] ? parseDeadlineReply(normalizedText, new Date()) : null;
+      if (titleMatch?.[1] && due) {
+        const match = tasks.find((task) => task.task.trim().toLowerCase() === titleMatch[1]!.trim().toLowerCase());
+        if (match) {
+          await deps.updateTask(config, match.id, { due_date: due });
+          const reply = `Tugas '${match.task}' tenggatnya ${due}.`;
+          currentLog += "\nBot: " + reply;
+          await deps.saveChatLog(env, userId, currentLog.slice(-CHAT_LOG_MAX_CHARS));
+          return reply;
+        }
+      }
+    }
+
+    const financeSource = !isGroup ? financeDeleteSourceText(normalizedText, currentLog) : null;
+    if (financeSource) {
+      const proposed = await proposeFinanceDelete(env, userId, config, deps, financeSource, {});
+      currentLog += "\nBot: " + proposed.message;
+      await deps.saveChatLog(env, userId, currentLog.slice(-CHAT_LOG_MAX_CHARS));
+      return proposed.message;
+    }
+
     let continueLoop = true;
     let turnCount = 0;
     let finalResponse = HELP;
@@ -623,7 +700,21 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
                 replyMessages.push(`Catatan ${typeLabel} '${name}' sebesar ${currency === "IDR" ? "Rp" : currency + " "}${formattedAmount} sudah disimpan.`);
                 break;
               }
+              case "delete_notion_finance": {
+                const source = financeDeleteSourceText(normalizedText, currentLog) ?? normalizedText;
+                const proposed = await proposeFinanceDelete(env, userId, config, deps, source, call.args ?? {});
+                if (proposed.saved) pendingDeleteSavedThisTurn = true;
+                replyMessages.push(proposed.message);
+                break;
+              }
               case "read_notion_finance": {
+                const financeReadSource = financeDeleteSourceText(normalizedText, currentLog);
+                if (financeReadSource) {
+                  const proposed = await proposeFinanceDelete(env, userId, config, deps, financeReadSource, {});
+                  if (proposed.saved) pendingDeleteSavedThisTurn = true;
+                  replyMessages.push(proposed.message);
+                  break;
+                }
                 const filterType = call.args.type === "Income" ? "Income" : call.args.type === "Expense" ? "Expense" : "All";
                 const filter: { startDate?: string; endDate?: string; type?: "Income" | "Expense" | "All"; category?: string } = {
                   ...(typeof call.args.startDate === "string" ? { startDate: call.args.startDate } : {}),
@@ -1265,6 +1356,13 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
                 break;
               }
               case "delete_notion_tasks": {
+                const financeSource = financeDeleteSourceText(normalizedText, currentLog);
+                if (financeSource) {
+                  const proposed = await proposeFinanceDelete(env, userId, config, deps, financeSource, {});
+                  if (proposed.saved) pendingDeleteSavedThisTurn = true;
+                  replyMessages.push(proposed.message);
+                  break;
+                }
                 const keywords = Array.isArray(call.args.keywords) ? call.args.keywords : [];
                 if (keywords.length === 0) {
                   replyMessages.push("Tidak ada kata kunci tugas yang diberikan untuk dihapus.");
@@ -1307,6 +1405,13 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
                 break;
               }
               case "delete_notion_notes": {
+                const financeSource = financeDeleteSourceText(normalizedText, currentLog);
+                if (financeSource) {
+                  const proposed = await proposeFinanceDelete(env, userId, config, deps, financeSource, {});
+                  if (proposed.saved) pendingDeleteSavedThisTurn = true;
+                  replyMessages.push(proposed.message);
+                  break;
+                }
                 const keywords = Array.isArray(call.args.keywords) ? call.args.keywords : [];
                 if (keywords.length === 0) {
                   replyMessages.push("Tidak ada kata kunci catatan yang diberikan untuk dihapus.");
@@ -1358,6 +1463,13 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
                 break;
               }
               case "delete_notion_memory": {
+                const financeSource = financeDeleteSourceText(normalizedText, currentLog);
+                if (financeSource) {
+                  const proposed = await proposeFinanceDelete(env, userId, config, deps, financeSource, {});
+                  if (proposed.saved) pendingDeleteSavedThisTurn = true;
+                  replyMessages.push(proposed.message);
+                  break;
+                }
                 const keywords = Array.isArray(call.args.keywords) ? call.args.keywords : [];
                 if (keywords.length === 0) {
                   replyMessages.push("Tidak ada kata kunci memori yang diberikan untuk dihapus.");

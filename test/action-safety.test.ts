@@ -79,6 +79,7 @@ describe("delete confirm phrases", () => {
     expect(isPositiveDeleteConfirm("lanjutkan")).toBe(true);
     expect(isPositiveDeleteConfirm("ya hapus")).toBe(true);
     expect(isPositiveDeleteConfirm("iya boleh")).toBe(true);
+    expect(isPositiveDeleteConfirm("Iyaa serius")).toBe(true);
   });
 
   it("does not treat bare hapus or long chat as positive", () => {

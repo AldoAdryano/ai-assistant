@@ -131,6 +131,14 @@ const GOALS_CRUD_RULES = [
   "4. delete_notion_goal: selalu panggil tool (sistem akan minta konfirmasi ya/jangan). Jangan arsip sendiri tanpa tool.",
 ].join(" ");
 
+const FINANCE_RULES = [
+  "FINANCE — LIFE OS Finance (DM only when tools tersedia):",
+  "1. Pengeluaran/pemasukan/transaksi/uang masuk create_notion_finance atau read_notion_finance. Jangan jadi Task atau catatan Inbox.",
+  "2. Hapus pengeluaran, pemasukan, atau riwayat keuangan WAJIB delete_notion_finance. JANGAN delete_notion_notes, delete_notion_tasks, atau delete_notion_memory.",
+  "3. Untuk 'minggu ini' isi startDate dan endDate (Senin–Minggu, YYYY-MM-DD, WIB). type=Expense untuk pengeluaran, Income untuk pemasukan.",
+  "4. Panggil tool-nya langsung. Jangan minta konfirmasi di teks dulu — sistem yang menanyakan ya/jangan.",
+].join(" ");
+
 const PLANNER_RULES = [
   "TASK PLANNER (DM only):",
   "1. 'atur/susun/urutkan tugas minggu ini' → propose_task_plan kind=week dengan update ops. taskId wajib dari Active tasks. due_date YYYY-MM-DD di minggu WIB berjalan. Jangan create.",
@@ -246,6 +254,7 @@ export async function generateChatReply(
       ...(context.projectsEnabled ? [PROJECTS_CRUD_RULES] : []),
       ...(context.goalsEnabled ? [GOALS_CRUD_RULES] : []),
       ...(context.learningEnabled ? [LEARNING_RULES] : []),
+      ...(context.financeEnabled ? [FINANCE_RULES] : []),
       PLANNER_RULES,
       "\nActive tasks:\n" + (taskLines.length ? taskLines.join("\n") : "- none"),
       "\nExplicit memory:\n" + memoryBlock,
@@ -607,6 +616,21 @@ export async function generateChatReply(
               notes: { type: "STRING", description: "Catatan tambahan." },
             },
             required: ["name", "amount", "type", "category"]
+          }
+        },
+        {
+          type: "function",
+          name: "delete_notion_finance",
+          description: "Requests archive/delete of LIFE OS Finance rows (pengeluaran/pemasukan). System asks Aldo to confirm ya/jangan. NEVER use delete_notion_notes for money. Pass type and startDate/endDate for a range such as minggu ini.",
+          parameters: {
+            type: "OBJECT",
+            properties: {
+              startDate: { type: "STRING", description: "YYYY-MM-DD inclusive. Wajib untuk 'minggu ini' / 'bulan ini'." },
+              endDate: { type: "STRING", description: "YYYY-MM-DD inclusive." },
+              type: { type: "STRING", enum: ["Expense", "Income", "All"], description: "Expense = pengeluaran, Income = pemasukan." },
+              category: { type: "STRING", description: "Optional category filter." },
+            },
+            required: []
           }
         },
         {

@@ -1,5 +1,6 @@
 import type { PendingDelete, PendingMemory } from "./action-safety";
 import type { ConversationContext } from "./conversation-context";
+import type { PendingTaskPlan } from "./task-plan";
 import type { Env, NormalizedTaskResult } from "./types";
 
 const TTL_SECONDS = 3600;
@@ -80,6 +81,28 @@ export async function clearPendingMemory(env: Env, userId: number | string): Pro
   await env.DEDUP_KV.delete(getPendingMemoryKey(userId));
 }
 
+function getPendingTaskPlanKey(userId: number | string): string {
+  return `pending_task_plan:${userId}`;
+}
+
+export async function savePendingTaskPlan(env: Env, userId: number | string, plan: PendingTaskPlan): Promise<void> {
+  await env.DEDUP_KV.put(getPendingTaskPlanKey(userId), JSON.stringify(plan), { expirationTtl: TTL_SECONDS });
+}
+
+export async function getPendingTaskPlan(env: Env, userId: number | string): Promise<PendingTaskPlan | null> {
+  const data = await env.DEDUP_KV.get(getPendingTaskPlanKey(userId));
+  if (!data) return null;
+  try {
+    return JSON.parse(data) as PendingTaskPlan;
+  } catch {
+    return null;
+  }
+}
+
+export async function clearPendingTaskPlan(env: Env, userId: number | string): Promise<void> {
+  await env.DEDUP_KV.delete(getPendingTaskPlanKey(userId));
+}
+
 function getInteractionKey(userId: number | string): string {
   return `interaction_id:${userId}`;
 }
@@ -146,5 +169,6 @@ export async function clearMemory(env: Env, userId: number | string): Promise<vo
     env.DEDUP_KV.delete(getConversationContextKey(userId)),
     env.DEDUP_KV.delete(getPendingDeleteKey(userId)),
     env.DEDUP_KV.delete(getPendingMemoryKey(userId)),
+    env.DEDUP_KV.delete(getPendingTaskPlanKey(userId)),
   ]);
 }

@@ -1,5 +1,7 @@
 # Youyou × LIFE OS — Finance Capture v1 Implementation Plan
 
+> **Status (2026-10-06): selesai.** Tipe, Notion client, tool Gemini, router, dan ringkasan sudah di `main`. Tanggal transaksi memakai `normalizeFinanceDate` (offset WIB, hari kalender tidak ditimpa ke hari ini). Health capture bukan bagian plan ini.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Menambahkan pencatatan transaksi keuangan (Expense/Income) dan pelaporan ringkasan via WhatsApp/Telegram dengan integrasi Notion API dan Gemini Tool-Calling.
@@ -296,16 +298,16 @@ git commit -m "feat: wire finance tools into message router and summary formatte
 - Modify: `docs/superpowers/plans/2026-09-20-youyou-life-os-roadmap.md`
 - Test: Full Vitest suite
 
-- [ ] **Step 1: Jalankan verifikasi total**
+- [x] **Step 1: Jalankan verifikasi total**
 
 Run: `sg docker -c "bash test-docker.sh"`
 Expected: Exit 0, semua test lulus tanpa error.
 
-- [ ] **Step 2: Update status roadmap LIFE OS**
+- [x] **Step 2: Update status roadmap LIFE OS**
 
 Tandai Fase 4 (Finance Capture v1) sebagai selesai / in-progress di `docs/superpowers/plans/2026-09-20-youyou-life-os-roadmap.md`.
 
-- [ ] **Step 3: Commit dokumentasi**
+- [x] **Step 3: Commit dokumentasi**
 
 ```bash
 git add docs/superpowers/plans/2026-09-20-youyou-life-os-roadmap.md

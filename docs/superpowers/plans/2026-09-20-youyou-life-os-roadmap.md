@@ -15,6 +15,7 @@
 | Tasks ↔ Projects | Projects Link v1 | ✅ |
 | CRUD Projects | Projects CRUD v1 | ✅ |
 | Operasional DB | Inbox, Tasks, Rutinitas, Memory | ✅ (ada sebelumnya) |
+| Uang | Finance Capture v1 (catat + ringkas, tanggal WIB) | ✅ (2026-10-06) |
 
 ## Definisi “tuntas”
 
@@ -107,6 +108,8 @@ Seed yang dipakai:
 
 ### Fase 4 — Finance + Health capture v1
 
+**Finance Capture v1: ✅ selesai (2026-10-06).** Spek `docs/superpowers/specs/2026-10-05-youyou-finance-v1-design.md`. Health belum mulai.
+
 **Tujuan:** dua kebiasaan PDF yang sering terlewat: uang & tubuh.
 
 Kerjakan sebagai **satu spek** atau dua mini-spek berurutan (Finance dulu jika income experiment 30 hari aktif).
@@ -187,5 +190,5 @@ Asumsi: 1 fase inti / sesi fokus (bukan hari kalender kaku).
 
 ## Next action
 
-1. **Fase 0** — seed Notion (manual) bila belum.
-2. Brainstorm + spek **Fase 1 Goals Link v1**.
+1. Brainstorm + spek **Health capture** (sisa Fase 4). Finance Capture v1 sudah di kode.
+2. Setelah Health: Fase 5 Career + Reflection.

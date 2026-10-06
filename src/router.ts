@@ -1203,6 +1203,11 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
                   replyMessages.push("Rencana tugas hanya di chat pribadi.");
                   break;
                 }
+                const deletePendingForPlan = await deps.getPendingDelete(env, userId);
+                if (deletePendingForPlan && isPendingDeleteFresh(deletePendingForPlan)) {
+                  replyMessages.push('Selesaikan konfirmasi hapus dulu. Balas "ya" atau "jangan".');
+                  break;
+                }
                 const rawOps = Array.isArray(call.args.ops) ? call.args.ops : [];
                 const validation = call.args.kind === "learn"
                   ? validateLearnPlan(normalizedText, tasks, rawOps, new Date())

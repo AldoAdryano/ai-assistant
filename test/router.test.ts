@@ -2709,6 +2709,28 @@ describe("task plan confirmation (DM)", () => {
     expect(reply).toContain("menghapus");
   });
 
+  it("does not save a task plan while a delete confirmation is pending", async () => {
+    const d = deps({
+      getPendingDelete: vi.fn(async () => ({
+        kind: "tasks" as const,
+        ids: ["task-9"],
+        summary: "Revisi",
+        createdAt: Date.now(),
+      })),
+      listActiveTasks: vi.fn(async () => planActive),
+      generateChatReply: vi.fn().mockResolvedValueOnce({
+        type: "function_calls",
+        calls: [{ name: "propose_task_plan", args: { kind: "week", ops: [
+          { op: "update", taskId: "t1", due_date: planWeekDue },
+        ] } }],
+      }) as any,
+    });
+    const reply = await handleUserMessage(env, 123, config, { text: "Atur tugas minggu ini" }, d);
+    expect(d.savePendingTaskPlan).not.toHaveBeenCalled();
+    expect(d.archiveTask).not.toHaveBeenCalled();
+    expect(reply).toContain("konfirmasi hapus");
+  });
+
   it("blocks task writes while a fresh plan is waiting", async () => {
     const plan = {
       kind: "week" as const,

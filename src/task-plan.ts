@@ -58,7 +58,10 @@ function dateOnly(raw: string | undefined): string | null {
 }
 
 function asPriority(raw: string | undefined): PlanPriority | undefined {
-  if (raw === "Low" || raw === "Medium" || raw === "High") return raw;
+  const lower = raw?.trim().toLowerCase();
+  if (lower === "low") return "Low";
+  if (lower === "medium") return "Medium";
+  if (lower === "high") return "High";
   return undefined;
 }
 

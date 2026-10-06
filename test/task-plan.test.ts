@@ -66,6 +66,21 @@ describe("validateWeekPlan and formatPlanReply", () => {
     ]);
   });
 
+  it("keeps a lowercase model priority when the user mentioned one", () => {
+    const result = validateWeekPlan("atur tugas minggu ini, prioritas tinggi", tasks, [
+      { op: "update", taskId: "t1", due_date: "2026-10-08", priority: "high" },
+    ], now);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.plan.ops[0]).toEqual({
+      op: "update",
+      taskId: "t1",
+      title: "Revisi bab 2",
+      due_date: "2026-10-08",
+      priority: "High",
+    });
+  });
+
   it("refuses a week plan when nothing valid remains", () => {
     const result = validateWeekPlan("atur tugas minggu ini", [], [
       { op: "update", taskId: "t1", due_date: "2026-10-08" },

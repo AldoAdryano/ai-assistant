@@ -32,7 +32,7 @@ import {
 } from "./action-safety";
 import type { PendingDelete, PendingMemory } from "./action-safety";
 import { applyTopicSwitch, detectExplicitTopicSwitch, type ConversationContext } from "./conversation-context";
-import { parseIndonesianDeadline, parseIndonesianNaturalDate } from "./date";
+import { parseIndonesianDeadline, parseIndonesianNaturalDate, formatISOWithOffset, nowWib } from "./date";
 import { extractProjectMention, findExactProject, matchProject } from "./project-match";
 import { formatProjectList, formatProjectStatus } from "./project-intelligence";
 import { findExactGoal, matchGoal } from "./goal-match";
@@ -538,7 +538,20 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
                 const type = call.args.type === "Income" ? "Income" : "Expense";
                 const category = typeof call.args.category === "string" ? call.args.category : "Other";
                 const name = typeof call.args.name === "string" ? call.args.name : "Transaksi";
-                const date = typeof call.args.date === "string" ? call.args.date : new Date().toISOString();
+                const now = new Date();
+                const nowIsoWib = formatISOWithOffset(now, 7);
+                const currentTimePart = nowIsoWib.split("T")[1];
+                let date: string;
+                if (typeof call.args.date === "string" && call.args.date.trim()) {
+                  const rawDate = call.args.date.trim();
+                  if (rawDate.length <= 10 && /^\d{4}-\d{2}-\d{2}$/.test(rawDate)) {
+                    date = `${rawDate}T${currentTimePart}`;
+                  } else {
+                    date = rawDate;
+                  }
+                } else {
+                  date = nowIsoWib;
+                }
                 const notes = typeof call.args.notes === "string" ? call.args.notes : null;
                 
                 await deps.createFinanceRecord(config, {

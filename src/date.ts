@@ -203,7 +203,7 @@ export function parseIndonesianDeadline(input: string, now?: Date): DeadlinePars
   return { kind: "none" };
 }
 
-function formatISOWithOffset(date: Date, offsetHours: number): string {
+export function formatISOWithOffset(date: Date, offsetHours: number): string {
   const localDate = new Date(date.getTime() + offsetHours * 3600000);
   const y = localDate.getUTCFullYear();
   const m = String(localDate.getUTCMonth() + 1).padStart(2, '0');

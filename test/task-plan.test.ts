@@ -82,11 +82,31 @@ describe("validateWeekPlan and formatPlanReply", () => {
     });
   });
 
-  it("refuses a week plan when nothing valid remains", () => {
+  it("refuses a week plan when there are no active tasks", () => {
     const result = validateWeekPlan("atur tugas minggu ini", [], [
       { op: "update", taskId: "t1", due_date: "2026-10-08" },
     ], now);
     expect(result).toEqual({ ok: false, message: "Tidak ada tugas aktif untuk diatur minggu ini." });
+  });
+
+  it("refuses a week plan when active tasks exist but no op survives the filter", () => {
+    const result = validateWeekPlan("atur tugas minggu ini", tasks, [
+      { op: "update", taskId: "unknown", due_date: "2026-10-08" },
+      { op: "update", taskId: "t1", due_date: "2026-10-20" },
+    ], now);
+    expect(result).toEqual({ ok: false, message: "Tidak ada operasi yang cocok untuk minggu ini." });
+  });
+
+  it("keeps only the last in-week update for the same taskId", () => {
+    const result = validateWeekPlan("atur tugas minggu ini", tasks, [
+      { op: "update", taskId: "t1", due_date: "2026-10-08" },
+      { op: "update", taskId: "t1", due_date: "2026-10-09" },
+    ], now);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.plan.ops).toEqual([
+      { op: "update", taskId: "t1", title: "Revisi bab 2", due_date: "2026-10-09" },
+    ]);
   });
 
   it("formats the old due and asks for ya or jangan", () => {

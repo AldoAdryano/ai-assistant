@@ -2615,7 +2615,13 @@ describe("task plan confirmation (DM)", () => {
       ],
     };
     for (const text of ["ya", "Iyaa serius"]) {
-      const d = deps({ getPendingTaskPlan: vi.fn(async () => plan) });
+      const d = deps({
+        getPendingTaskPlan: vi.fn(async () => plan),
+        listActiveTasks: vi.fn(async () => [
+          { id: "t1", task: "Revisi bab 2", status: "To Do" as const, priority: "Medium" as const },
+          { id: "t2", task: "Bab 3", status: "To Do" as const, priority: "Medium" as const },
+        ]),
+      });
       const reply = await handleUserMessage(env, 123, config, { text }, d);
       expect(d.generateChatReply).not.toHaveBeenCalled();
       expect(d.updateTask).toHaveBeenNthCalledWith(1, config, "t1", { due_date: "2026-10-08" });
@@ -2623,6 +2629,24 @@ describe("task plan confirmation (DM)", () => {
       expect(d.clearPendingTaskPlan).toHaveBeenCalledWith(env, 123);
       expect(reply).toContain("Berhasil 2");
     }
+  });
+
+  it("skips a week update whose task is no longer active", async () => {
+    const plan = {
+      kind: "week" as const,
+      createdAt: Date.now(),
+      ops: [{ op: "update" as const, taskId: "t1", title: "Revisi bab 2", due_date: "2026-10-08" }],
+    };
+    const d = deps({
+      getPendingTaskPlan: vi.fn(async () => plan),
+      listActiveTasks: vi.fn(async () => []),
+    });
+    const reply = await handleUserMessage(env, 123, config, { text: "ya" }, d);
+    expect(d.listActiveTasks).toHaveBeenCalledTimes(1);
+    expect(d.updateTask).not.toHaveBeenCalled();
+    expect(d.clearPendingTaskPlan).toHaveBeenCalledWith(env, 123);
+    expect(reply).toContain("tidak aktif");
+    expect(reply).toContain("Revisi bab 2");
   });
 
   it("discards a stored plan on jangan without writes", async () => {
@@ -2651,8 +2675,9 @@ describe("task plan confirmation (DM)", () => {
     const reply = await handleUserMessage(env, 123, config, { text: "ya" }, d);
     expect(d.updateTask).not.toHaveBeenCalled();
     expect(d.clearPendingTaskPlan).not.toHaveBeenCalled();
-    expect(reply).toContain("Gagal");
-    expect(reply).toContain("ROS basics");
+    expect(reply).not.toContain("Berhasil 0");
+    expect(reply).toContain("Gagal 1 tugas: ROS basics.");
+    expect(reply).toContain('Balas "ya" lagi untuk coba ulang, atau "jangan" untuk batal.');
   });
 
   it("clears the plan after a partial apply and names the failure", async () => {

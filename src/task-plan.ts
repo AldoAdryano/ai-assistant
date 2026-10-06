@@ -78,8 +78,16 @@ export function validateWeekPlan(
   const week = currentWibWeekRange(now);
   const keepPriority = userMentionsPriority(userText);
   const stored: StoredPlanOp[] = [];
-  for (const op of ops) {
+  const lastUpdateIndex = new Map<string, number>();
+  ops.forEach((op, index) => {
+    if (op.op !== "update") return;
+    const due = dateOnly(op.due_date);
+    if (!due || due < week.startDate || due > week.endDate) return;
+    if (op.taskId) lastUpdateIndex.set(op.taskId, index);
+  });
+  for (const [index, op] of ops.entries()) {
     if (op.op !== "update") continue;
+    if (op.taskId && lastUpdateIndex.get(op.taskId) !== index) continue;
     const task = active.find((item) => item.id === op.taskId);
     const due = dateOnly(op.due_date);
     if (!task || !due || due < week.startDate || due > week.endDate) continue;

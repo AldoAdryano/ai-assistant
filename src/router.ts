@@ -191,7 +191,15 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
       } else if (pendingPlan && isPositiveDeleteConfirm(normalizedText)) {
         let success = 0;
         const failed: string[] = [];
+        const skipped: string[] = [];
+        const activeIds = pendingPlan.ops.some((op) => op.op === "update")
+          ? new Set((await deps.listActiveTasks(config)).map((task) => task.id))
+          : null;
         for (const op of pendingPlan.ops) {
+          if (op.op === "update" && activeIds && !activeIds.has(op.taskId)) {
+            skipped.push(op.title);
+            continue;
+          }
           try {
             if (op.op === "update") {
               await deps.updateTask(config, op.taskId, {
@@ -206,9 +214,14 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
             failed.push(op.title);
           }
         }
-        if (success > 0) await deps.clearPendingTaskPlan(env, userId);
+        if (success > 0 || failed.length === 0) await deps.clearPendingTaskPlan(env, userId);
+        const skipLine = skipped.length ? ` Dilewati karena sudah tidak aktif: ${skipped.join(", ")}.` : "";
+        if (success === 0 && failed.length > 0) {
+          return `Gagal ${failed.length} tugas: ${failed.join(", ")}. Balas "ya" lagi untuk coba ulang, atau "jangan" untuk batal.${skipLine}`;
+        }
+        if (success === 0) return `Tidak ada tugas yang diubah.${skipLine}`;
         const failLine = failed.length ? ` Gagal: ${failed.join(", ")}.` : "";
-        return `Berhasil ${success} tugas.${failLine}`;
+        return `Berhasil ${success} tugas.${failLine}${skipLine}`;
       }
     }
 

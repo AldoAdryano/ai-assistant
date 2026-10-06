@@ -1,11 +1,20 @@
 import { describe, expect, it } from "vitest";
+import type { TaskRecord } from "../src/types";
 import {
   PENDING_PLAN_FRESH_MS,
+  formatPlanReply,
   isPendingPlanFresh,
   learnWindow,
   parseLearningDays,
   userMentionsPriority,
+  validateWeekPlan,
 } from "../src/task-plan";
+
+const now = new Date("2026-10-06T10:00:00+07:00");
+const tasks: TaskRecord[] = [
+  { id: "t1", task: "Revisi bab 2", status: "To Do", priority: "Medium", due: "2026-10-10" },
+  { id: "t2", task: "Selesai", status: "Done", priority: "Low" },
+];
 
 describe("parseLearningDays", () => {
   it("uses the last number directly before hari", () => {
@@ -38,6 +47,41 @@ describe("userMentionsPriority", () => {
     expect(userMentionsPriority("priority low please")).toBe(true);
     expect(userMentionsPriority("sedang belajar")).toBe(true);
     expect(userMentionsPriority("atur tugas minggu ini")).toBe(false);
+  });
+});
+
+describe("validateWeekPlan and formatPlanReply", () => {
+  it("keeps in-week updates and drops creates, unknown ids, and outside dates", () => {
+    const result = validateWeekPlan("atur tugas minggu ini", tasks, [
+      { op: "update", taskId: "t1", due_date: "2026-10-08", priority: "High" },
+      { op: "update", taskId: "nope", due_date: "2026-10-08" },
+      { op: "update", taskId: "t1", due_date: "2026-10-20" },
+      { op: "create", title: "Baru", due_date: "2026-10-07" },
+    ], now);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.plan.kind).toBe("week");
+    expect(result.plan.ops).toEqual([
+      { op: "update", taskId: "t1", title: "Revisi bab 2", due_date: "2026-10-08" },
+    ]);
+  });
+
+  it("refuses a week plan when nothing valid remains", () => {
+    const result = validateWeekPlan("atur tugas minggu ini", [], [
+      { op: "update", taskId: "t1", due_date: "2026-10-08" },
+    ], now);
+    expect(result).toEqual({ ok: false, message: "Tidak ada tugas aktif untuk diatur minggu ini." });
+  });
+
+  it("formats the old due and asks for ya or jangan", () => {
+    const plan = {
+      kind: "week" as const,
+      createdAt: 1,
+      ops: [{ op: "update" as const, taskId: "t1", title: "Revisi bab 2", due_date: "2026-10-08" }],
+    };
+    const text = formatPlanReply(plan, [], tasks);
+    expect(text).toContain("1. Revisi bab 2 — 2026-10-08 (sebelumnya 2026-10-10)");
+    expect(text).toContain('Balas "ya" atau "jangan".');
   });
 });
 

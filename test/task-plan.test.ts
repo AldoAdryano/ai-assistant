@@ -7,6 +7,7 @@ import {
   learnWindow,
   parseLearningDays,
   userMentionsPriority,
+  validateLearnPlan,
   validateWeekPlan,
 } from "../src/task-plan";
 
@@ -97,6 +98,54 @@ describe("validateWeekPlan and formatPlanReply", () => {
     const text = formatPlanReply(plan, [], tasks);
     expect(text).toContain("1. Revisi bab 2 — 2026-10-08 (sebelumnya 2026-10-10)");
     expect(text).toContain('Balas "ya" atau "jangan".');
+  });
+});
+
+describe("validateLearnPlan", () => {
+  it("asks for a day count and does not build a plan", () => {
+    expect(validateLearnPlan("saya ingin belajar ROS", tasks, [
+      { op: "create", title: "ROS basics", due_date: "2026-10-06" },
+    ], now)).toEqual({
+      ok: false,
+      message: "Berapa hari? Sebut jumlahnya, misalnya 30 hari.",
+    });
+    expect(validateLearnPlan("belajar ROS 91 hari", tasks, [], now).ok).toBe(false);
+  });
+
+  it("caps at 8 creates, skips duplicates and updates, and defaults priority", () => {
+    const ops = [
+      { op: "update", taskId: "t1", due_date: "2026-10-07" },
+      { op: "create", title: " Revisi bab 2 ", due_date: "2026-10-06" },
+      ...Array.from({ length: 9 }, (_, i) => ({
+        op: "create",
+        title: `Langkah ${i + 1}`,
+        due_date: "2026-10-06",
+      })),
+    ];
+    const result = validateLearnPlan("belajar ROS dalam 30 hari", tasks, ops, now);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.plan.ops).toHaveLength(8);
+    expect(result.plan.ops[0]).toEqual({
+      op: "create",
+      title: "Langkah 1",
+      due_date: "2026-10-06",
+      priority: "Medium",
+    });
+    expect(result.notices.join(" ")).toContain("1 usulan dipotong karena batas 8 tugas.");
+    expect(result.notices.join(" ")).toContain("Revisi bab 2");
+  });
+
+  it("drops learn dates outside the window and does not save a duplicate-only plan", () => {
+    expect(validateLearnPlan("belajar ROS dalam 1 hari", tasks, [
+      { op: "create", title: "Besok", due_date: "2026-10-07" },
+    ], now).ok).toBe(false);
+    const dup = validateLearnPlan("belajar ROS dalam 30 hari", tasks, [
+      { op: "create", title: "revisi bab 2", due_date: "2026-10-06" },
+    ], now);
+    expect(dup.ok).toBe(false);
+    if (dup.ok) return;
+    expect(dup.message).toContain("Revisi bab 2");
   });
 });
 

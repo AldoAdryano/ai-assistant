@@ -98,6 +98,61 @@ export function validateWeekPlan(
   return { ok: true, plan: { kind: "week", ops: stored, createdAt: now.getTime() }, notices: [] };
 }
 
+const LEARN_CAP = 8;
+
+export function validateLearnPlan(
+  userText: string,
+  tasks: TaskRecord[],
+  ops: RawPlanOp[],
+  now: Date = new Date(),
+): PlanValidation {
+  const days = parseLearningDays(userText);
+  if (days === null) {
+    return { ok: false, message: "Berapa hari? Sebut jumlahnya, misalnya 30 hari." };
+  }
+  const window = learnWindow(now, days);
+  const activeTitles = new Set(
+    tasks
+      .filter((task) => task.status === "To Do" || task.status === "Doing")
+      .map((task) => task.task.trim().toLowerCase()),
+  );
+  const keepPriority = userMentionsPriority(userText);
+  const skipped: string[] = [];
+  const stored: StoredPlanOp[] = [];
+  let capped = 0;
+  for (const op of ops) {
+    if (op.op !== "create") continue;
+    const title = op.title?.trim() ?? "";
+    const due = dateOnly(op.due_date);
+    if (!title || !due || due < window.startDate || due > window.endDate) continue;
+    if (activeTitles.has(title.toLowerCase())) {
+      const existing = tasks.find(
+        (task) =>
+          (task.status === "To Do" || task.status === "Doing") &&
+          task.task.trim().toLowerCase() === title.toLowerCase(),
+      );
+      skipped.push(existing?.task.trim() ?? title);
+      continue;
+    }
+    if (stored.length >= LEARN_CAP) {
+      capped += 1;
+      continue;
+    }
+    const priority = (keepPriority ? asPriority(op.priority) : undefined) ?? "Medium";
+    stored.push({ op: "create", title, due_date: due, priority });
+  }
+  if (stored.length === 0) {
+    const why = skipped.length
+      ? `Judul itu sudah ada di tugas aktif: ${skipped.join(", ")}.`
+      : "Tidak ada tugas baru yang tanggalnya masuk jendela belajar.";
+    return { ok: false, message: why };
+  }
+  const notices: string[] = [];
+  if (capped > 0) notices.push(`${capped} usulan dipotong karena batas 8 tugas.`);
+  if (skipped.length) notices.push(`Sudah ada di tugas aktif: ${skipped.join(", ")}.`);
+  return { ok: true, plan: { kind: "learn", ops: stored, createdAt: now.getTime() }, notices };
+}
+
 export function formatPlanReply(plan: PendingTaskPlan, notices: string[], tasks: TaskRecord[]): string {
   const lines = plan.ops.map((op, index) => {
     if (op.op === "update") {

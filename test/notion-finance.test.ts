@@ -46,7 +46,46 @@ describe("Notion Finance API", () => {
     expect(capturedBody.parent.data_source_id).toBe("ds-finance-1");
     expect(capturedBody.properties.Amount.number).toBe(25000);
     expect(capturedBody.properties.Type.select.name).toBe("Expense");
+    expect(capturedBody.properties.Date.date.start).toBe("2026-10-05T12:30:00+07:00");
     expect(res.id).toBe("page-123");
+  });
+
+  it("keeps a past-month finance date instead of rewriting it to today", async () => {
+    let capturedBody: any = null;
+    const fakeFetch: typeof fetch = async (_url, init) => {
+      capturedBody = JSON.parse(String(init?.body));
+      return new Response(JSON.stringify({ id: "page-old" }), { status: 200 });
+    };
+
+    await createFinanceRecord(mockConfig, {
+      name: "Listrik",
+      amount: 150000,
+      currency: "IDR",
+      type: "Expense",
+      category: "Bills",
+      date: "2026-09-15T22:00:00+07:00",
+    }, fakeFetch);
+
+    expect(capturedBody.properties.Date.date.start).toBe("2026-09-15T22:00:00+07:00");
+  });
+
+  it("treats a timezone-less finance datetime as WIB", async () => {
+    let capturedBody: any = null;
+    const fakeFetch: typeof fetch = async (_url, init) => {
+      capturedBody = JSON.parse(String(init?.body));
+      return new Response(JSON.stringify({ id: "page-naive" }), { status: 200 });
+    };
+
+    await createFinanceRecord(mockConfig, {
+      name: "Makan",
+      amount: 15000,
+      currency: "IDR",
+      type: "Expense",
+      category: "Food",
+      date: "2026-10-05T12:00:00",
+    }, fakeFetch);
+
+    expect(capturedBody.properties.Date.date.start).toBe("2026-10-05T12:00:00+07:00");
   });
 
   it("throws NotionRejectionError when creating record if data source is unset", async () => {

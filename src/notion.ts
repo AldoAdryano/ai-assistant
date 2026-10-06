@@ -1,5 +1,5 @@
 import type { AppConfig, FinanceRecord, GoalRecord, LearningRecord, MemoryCategory, MemoryRecord, NoteType, Priority, ProjectRecord, RoutineRecord, TaskRecord } from "./types";
-import { normalizeNotionDue, stripDeadlineLeakFromTitle, nowWib, getJakartaDateParts } from "./date";
+import { normalizeFinanceDate, normalizeNotionDue, stripDeadlineLeakFromTitle, nowWib, getJakartaDateParts } from "./date";
 
 export const TASK_PROJECT_PROPERTY = "Project";
 export const PROJECT_GOAL_PROPERTY = "Goal";
@@ -876,7 +876,7 @@ export async function createFinanceRecord(
     throw new NotionRejectionError("Finance data source is not configured");
   }
 
-  const normDate = normalizeNotionDue(payload.date) ?? payload.date;
+  const normDate = normalizeFinanceDate(payload.date) ?? payload.date;
   const properties: Record<string, unknown> = {
     Name: { title: textItems(payload.name) },
     Amount: { number: payload.amount },
@@ -910,7 +910,7 @@ export async function createFinanceRecord(
     currency: payload.currency,
     type: payload.type,
     category: payload.category,
-    date: payload.date,
+    date: normDate,
     ...(payload.notes ? { notes: payload.notes } : {}),
   };
 }

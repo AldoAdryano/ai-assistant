@@ -216,6 +216,29 @@ export function formatISOWithOffset(date: Date, offsetHours: number): string {
   return `${y}-${m}-${d}T${h}:${min}:${s}${sign}${offH}:00`;
 }
 
+/** Finance timestamps keep their calendar day. Task deadline guards must not rewrite them. */
+export function normalizeFinanceDate(raw: string | undefined | null): string | undefined {
+  if (!raw) return undefined;
+  const value = raw.trim();
+  if (!value) return undefined;
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+
+  const naive = value.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/);
+  if (naive) {
+    const sec = naive[4] ?? "00";
+    return `${naive[1]}T${naive[2]}:${naive[3]}:${sec}+07:00`;
+  }
+
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(value)) {
+    const d = new Date(value);
+    if (isNaN(d.getTime())) return value;
+    return formatISOWithOffset(d, 7);
+  }
+
+  return value;
+}
+
 export function normalizeNotionDue(raw: string | undefined | null, now?: Date): string | undefined {
   if (!raw) return undefined;
   

@@ -15,7 +15,7 @@ export type PendingTaskPlan = {
 export const PENDING_PLAN_FRESH_MS = 30 * 60 * 1000;
 
 export function parseLearningDays(text: string): number | null {
-  const matches = [...text.toLowerCase().matchAll(/(\d{1,3})\s*hari\b/g)];
+  const matches = [...text.toLowerCase().matchAll(/\b(\d+)\s*hari\b/g)];
   if (matches.length === 0) return null;
   const raw = matches[matches.length - 1]?.[1];
   const n = raw ? Number(raw) : NaN;

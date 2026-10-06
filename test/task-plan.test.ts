@@ -12,12 +12,15 @@ describe("parseLearningDays", () => {
     expect(parseLearningDays("belajar ROS dalam 30 hari")).toBe(30);
     expect(parseLearningDays("belajar MQTT 14 hari")).toBe(14);
     expect(parseLearningDays("belajar 2 jam sehari selama 30 hari")).toBe(30);
+    expect(parseLearningDays("belajar 1 hari")).toBe(1);
+    expect(parseLearningDays("belajar 90 hari")).toBe(90);
   });
 
   it("returns null when missing or outside 1-90", () => {
     expect(parseLearningDays("belajar ROS")).toBeNull();
     expect(parseLearningDays("belajar ROS 0 hari")).toBeNull();
     expect(parseLearningDays("belajar ROS 91 hari")).toBeNull();
+    expect(parseLearningDays("belajar 1030 hari")).toBeNull();
   });
 });
 

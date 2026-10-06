@@ -203,6 +203,30 @@ export function parseIndonesianDeadline(input: string, now?: Date): DeadlinePars
   return { kind: "none" };
 }
 
+function wibCalendarDate(now: Date): Date {
+  const wib = new Date(now.getTime() + 7 * 3600000);
+  return new Date(Date.UTC(wib.getUTCFullYear(), wib.getUTCMonth(), wib.getUTCDate()));
+}
+
+function formatUtcDate(date: Date): string {
+  const y = date.getUTCFullYear();
+  const m = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const d = String(date.getUTCDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+/** Monday–Sunday of the current WIB week, as YYYY-MM-DD. */
+export function currentWibWeekRange(now: Date = new Date()): { startDate: string; endDate: string } {
+  const today = wibCalendarDate(now);
+  const day = today.getUTCDay();
+  const mondayOffset = day === 0 ? -6 : 1 - day;
+  const monday = new Date(today);
+  monday.setUTCDate(today.getUTCDate() + mondayOffset);
+  const sunday = new Date(monday);
+  sunday.setUTCDate(monday.getUTCDate() + 6);
+  return { startDate: formatUtcDate(monday), endDate: formatUtcDate(sunday) };
+}
+
 export function formatISOWithOffset(date: Date, offsetHours: number): string {
   const localDate = new Date(date.getTime() + offsetHours * 3600000);
   const y = localDate.getUTCFullYear();

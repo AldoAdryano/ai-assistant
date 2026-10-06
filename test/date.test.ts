@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { getJakartaDateParts, formatJakartaDateWithOffset, parseIndonesianDeadline, normalizeNotionDue, stripDeadlineLeakFromTitle, parseIndonesianNaturalDate } from "../src/date";
+import { getJakartaDateParts, formatJakartaDateWithOffset, parseIndonesianDeadline, normalizeNotionDue, stripDeadlineLeakFromTitle, parseIndonesianNaturalDate, currentWibWeekRange } from "../src/date";
 
 describe("parseIndonesianNaturalDate (Task 1)", () => {
   it("resolves relative days correctly (kemarin, hari ini, besok, lusa)", () => {
@@ -229,3 +229,25 @@ describe("Task 53: Normalization and Title Sanitation", () => {
   });
 });
 
+describe("currentWibWeekRange", () => {
+  it("returns Monday through Sunday for a Tuesday", () => {
+    expect(currentWibWeekRange(new Date("2026-10-06T10:00:00+07:00"))).toEqual({
+      startDate: "2026-10-05",
+      endDate: "2026-10-11",
+    });
+  });
+
+  it("keeps Sunday night in the same week (mondayOffset -6)", () => {
+    expect(currentWibWeekRange(new Date("2026-10-11T23:00:00+07:00"))).toEqual({
+      startDate: "2026-10-05",
+      endDate: "2026-10-11",
+    });
+  });
+
+  it("treats early Monday WIB as that Monday's week", () => {
+    expect(currentWibWeekRange(new Date("2026-10-05T00:30:00+07:00"))).toEqual({
+      startDate: "2026-10-05",
+      endDate: "2026-10-11",
+    });
+  });
+});

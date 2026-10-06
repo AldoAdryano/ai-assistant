@@ -638,3 +638,34 @@ it("omits Finance tools in group even when financeEnabled", async () => {
 
   expect(requestBody.tools).toBeUndefined();
 });
+
+it("includes propose_task_plan in DM and omits it in group", async () => {
+  let dmBody: any;
+  const dmFetch: typeof fetch = async (_input, init) => {
+    dmBody = JSON.parse(String(init?.body));
+    return interaction("Siap.");
+  };
+  await generateChatReply(config, { text: "Atur tugas minggu ini" }, {
+    tasks: [],
+    memories: [],
+    chatContext: "dm",
+  }, undefined, dmFetch);
+  const dmNames = dmBody.tools[0].functionDeclarations.map((t: { name: string }) => t.name);
+  expect(dmNames).toContain("propose_task_plan");
+  const tool = dmBody.tools[0].functionDeclarations.find((t: { name: string }) => t.name === "propose_task_plan");
+  expect(tool.parameters.properties.kind.enum).toEqual(["week", "learn"]);
+  expect(dmBody.systemInstruction.parts[0].text).toContain("propose_task_plan");
+
+  let groupBody: any;
+  const groupFetch: typeof fetch = async (_input, init) => {
+    groupBody = JSON.parse(String(init?.body));
+    return interaction("Siap.");
+  };
+  await generateChatReply(config, { text: "Atur tugas minggu ini" }, {
+    tasks: [],
+    memories: [],
+    chatContext: "group",
+  }, undefined, groupFetch);
+  expect(groupBody.tools).toBeUndefined();
+  expect(groupBody.systemInstruction.parts[0].text).not.toContain("TASK PLANNER");
+});

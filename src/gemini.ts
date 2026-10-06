@@ -131,6 +131,14 @@ const GOALS_CRUD_RULES = [
   "4. delete_notion_goal: selalu panggil tool (sistem akan minta konfirmasi ya/jangan). Jangan arsip sendiri tanpa tool.",
 ].join(" ");
 
+const PLANNER_RULES = [
+  "TASK PLANNER (DM only):",
+  "1. 'atur/susun/urutkan tugas minggu ini' → propose_task_plan kind=week dengan update ops. taskId wajib dari Active tasks. due_date YYYY-MM-DD di minggu WIB berjalan. Jangan create.",
+  "2. 'belajar X dalam N hari' → propose_task_plan kind=learn dengan create ops. Sebar due_date dari hari ini sampai hari ke-N. Jangan update. Jangan tulis Learning/Goal.",
+  "3. Satu sesi bertenggat ('belajar MQTT 30 menit malam ini') tetap create_notion_task, bukan planner.",
+  "4. Jangan menulis Notion sendiri untuk rencana ini. Sistem menyimpan rencana dan menanyakan ya/jangan.",
+].join(" ");
+
 const LEARNING_RULES = [
   "LEARNING — LIFE OS Learning / Brain boundary (DM only when tools tersedia):",
   "1. LIFE OS Learning = skill stack (Skill/Area/Level/Status) — bukan Memory, bukan Goals. Jangan campur store.",
@@ -238,6 +246,7 @@ export async function generateChatReply(
       ...(context.projectsEnabled ? [PROJECTS_CRUD_RULES] : []),
       ...(context.goalsEnabled ? [GOALS_CRUD_RULES] : []),
       ...(context.learningEnabled ? [LEARNING_RULES] : []),
+      PLANNER_RULES,
       "\nActive tasks:\n" + (taskLines.length ? taskLines.join("\n") : "- none"),
       "\nExplicit memory:\n" + memoryBlock,
     ]),
@@ -616,6 +625,32 @@ export async function generateChatReply(
           }
         },
       ] : []),
+      {
+        type: "function",
+        name: "propose_task_plan",
+        description: "Proposes a task plan for Aldo to confirm. Does not write Notion. kind=week updates existing tasks this WIB week. kind=learn creates at most 8 new tasks across N days.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            kind: { type: "STRING", enum: ["week", "learn"] },
+            ops: {
+              type: "ARRAY",
+              items: {
+                type: "OBJECT",
+                properties: {
+                  op: { type: "STRING", enum: ["update", "create"] },
+                  taskId: { type: "STRING" },
+                  title: { type: "STRING" },
+                  due_date: { type: "STRING", description: "YYYY-MM-DD WIB." },
+                  priority: { type: "STRING", enum: ["Low", "Medium", "High"] },
+                },
+                required: ["op", "due_date"],
+              },
+            },
+          },
+          required: ["kind", "ops"],
+        },
+      },
     ];
 
   if (previousInteractionId) {

@@ -14,6 +14,9 @@ import {
   getPendingMemory,
   savePendingMemory,
   clearPendingMemory,
+  getPendingTaskPlan,
+  savePendingTaskPlan,
+  clearPendingTaskPlan,
   getConversationContext,
   saveConversationContext,
   clearConversationContext,
@@ -38,6 +41,7 @@ import { formatProjectList, formatProjectStatus } from "./project-intelligence";
 import { findExactGoal, matchGoal } from "./goal-match";
 import { findExactLearning, matchLearning } from "./learning-match";
 import { formatLearningList } from "./learning-format";
+import { validateWeekPlan, validateLearnPlan, formatPlanReply, isPendingPlanFresh } from "./task-plan";
 import type { AppConfig, Env, GoalRecord, LearningRecord, ProjectRecord } from "./types";
 
 export function sanitizeMarkdown(text: string): string {
@@ -55,6 +59,7 @@ export interface RouterDeps {
   getChatLog: typeof getChatLog; saveChatLog: typeof saveChatLog; clearMemory: typeof clearMemory;
   getPendingDelete: typeof getPendingDelete; savePendingDelete: typeof savePendingDelete; clearPendingDelete: typeof clearPendingDelete;
   getPendingMemory: typeof getPendingMemory; savePendingMemory: typeof savePendingMemory; clearPendingMemory: typeof clearPendingMemory;
+  getPendingTaskPlan: typeof getPendingTaskPlan; savePendingTaskPlan: typeof savePendingTaskPlan; clearPendingTaskPlan: typeof clearPendingTaskPlan;
   getConversationContext: typeof getConversationContext;
   saveConversationContext: typeof saveConversationContext;
   clearConversationContext: typeof clearConversationContext;
@@ -65,6 +70,7 @@ const defaultDeps: RouterDeps = {
   createFinanceRecord, listFinanceRecords,
   generateChatReply, parseIndonesianDeadline, parseIndonesianNaturalDate, getInteractionId, saveInteractionId, getChatLog, saveChatLog, clearMemory,
   getPendingDelete, savePendingDelete, clearPendingDelete, getPendingMemory, savePendingMemory, clearPendingMemory,
+  getPendingTaskPlan, savePendingTaskPlan, clearPendingTaskPlan,
   getConversationContext, saveConversationContext, clearConversationContext,
   generateTaskBriefing,
 };
@@ -173,6 +179,36 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
           await deps.clearPendingMemory(env, userId);
           return `Ok, sudah aku ingat *${pendingMemory.key}*.`;
         }
+      }
+
+      // Pending task plan confirm/cancel (delete and memory win above)
+      const pendingPlan = await deps.getPendingTaskPlan(env, userId);
+      if (pendingPlan && !isPendingPlanFresh(pendingPlan)) {
+        await deps.clearPendingTaskPlan(env, userId);
+      } else if (pendingPlan && isNegativeDeleteConfirm(normalizedText)) {
+        await deps.clearPendingTaskPlan(env, userId);
+        return "Ok, batal. Tidak ada tugas yang diubah.";
+      } else if (pendingPlan && isPositiveDeleteConfirm(normalizedText)) {
+        let success = 0;
+        const failed: string[] = [];
+        for (const op of pendingPlan.ops) {
+          try {
+            if (op.op === "update") {
+              await deps.updateTask(config, op.taskId, {
+                due_date: op.due_date,
+                ...(op.priority ? { priority: op.priority } : {}),
+              });
+            } else {
+              await deps.createTask(config, { task: op.title, priority: op.priority, due_date: op.due_date });
+            }
+            success += 1;
+          } catch {
+            failed.push(op.title);
+          }
+        }
+        if (success > 0) await deps.clearPendingTaskPlan(env, userId);
+        const failLine = failed.length ? ` Gagal: ${failed.join(", ")}.` : "";
+        return `Berhasil ${success} tugas.${failLine}`;
       }
     }
 
@@ -426,6 +462,11 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
           try {
             switch (call.name) {
               case "create_notion_task": {
+                const waitingPlanOnCreate = await deps.getPendingTaskPlan(env, userId);
+                if (waitingPlanOnCreate && isPendingPlanFresh(waitingPlanOnCreate)) {
+                  replyMessages.push('Masih ada rencana tugas yang menunggu. Balas "ya" atau "jangan" dulu.');
+                  break;
+                }
                 const { call: sanitizedCall, stripped: inventedDueStripped } = stripInventedDueDate(call, payload.text);
                 const args = sanitizedCall.args;
                 const titleLower = (args.title || "").toLowerCase().trim();
@@ -1157,7 +1198,29 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
                 );
                 break;
               }
+              case "propose_task_plan": {
+                if (isGroup) {
+                  replyMessages.push("Rencana tugas hanya di chat pribadi.");
+                  break;
+                }
+                const rawOps = Array.isArray(call.args.ops) ? call.args.ops : [];
+                const validation = call.args.kind === "learn"
+                  ? validateLearnPlan(normalizedText, tasks, rawOps, new Date())
+                  : validateWeekPlan(normalizedText, tasks, rawOps, new Date());
+                if (!validation.ok) {
+                  replyMessages.push(validation.message);
+                  break;
+                }
+                await deps.savePendingTaskPlan(env, userId, validation.plan);
+                replyMessages.push(formatPlanReply(validation.plan, validation.notices, tasks));
+                break;
+              }
               case "update_notion_task": {
+                const waitingPlanOnUpdate = await deps.getPendingTaskPlan(env, userId);
+                if (waitingPlanOnUpdate && isPendingPlanFresh(waitingPlanOnUpdate)) {
+                  replyMessages.push('Masih ada rencana tugas yang menunggu. Balas "ya" atau "jangan" dulu.');
+                  break;
+                }
                 let finalDueDate = call.args.due_date;
                 if (finalDueDate) {
                   const naturalParsed = deps.parseIndonesianNaturalDate(finalDueDate, new Date());

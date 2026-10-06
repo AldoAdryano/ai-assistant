@@ -4,6 +4,8 @@ import { handleUserMessage, type RouterDeps } from "../src/router";
 import { NotionRejectionError } from "../src/notion";
 import { GeminiApiError } from "../src/gemini";
 import { emptyBriefingReply } from "../src/task-intelligence";
+import { currentWibWeekRange } from "../src/date";
+import { learnWindow } from "../src/task-plan";
 
 const config = {} as AppConfig;
 const env = {} as Env;
@@ -50,6 +52,9 @@ function deps(overrides: Partial<RouterDeps> = {}): RouterDeps {
     getPendingMemory: vi.fn(async () => null),
     savePendingMemory: vi.fn(async () => undefined),
     clearPendingMemory: vi.fn(async () => undefined),
+    getPendingTaskPlan: vi.fn(async () => null),
+    savePendingTaskPlan: vi.fn(async () => undefined),
+    clearPendingTaskPlan: vi.fn(async () => undefined),
     getConversationContext: vi.fn(async () => null),
     saveConversationContext: vi.fn(async () => undefined),
     clearConversationContext: vi.fn(async () => undefined),
@@ -2570,5 +2575,253 @@ describe("handleUserMessage (AI-Driven)", () => {
       expect(d.archiveLearning).toHaveBeenCalledWith(learningConfig, "learn-py");
       expect(reply).toMatch(/berhasil menghapus 1 skill/i);
     });
+  });
+});
+
+describe("task plan confirmation (DM)", () => {
+  const planActive = [{ id: "t1", task: "Revisi bab 2", status: "To Do" as const, priority: "Medium" as const, due: "2026-10-10" }];
+  const planWeekDue = currentWibWeekRange(new Date()).startDate;
+
+  it("saves a week plan and does not update Notion yet", async () => {
+    const d = deps({
+      listActiveTasks: vi.fn(async () => planActive),
+      generateChatReply: vi.fn().mockResolvedValueOnce({
+        type: "function_calls",
+        calls: [{ name: "propose_task_plan", args: { kind: "week", ops: [
+          { op: "update", taskId: "t1", due_date: planWeekDue, priority: "High" },
+          { op: "update", taskId: "missing", due_date: planWeekDue },
+        ] } }],
+      }) as any,
+    });
+    const reply = await handleUserMessage(env, 123, config, { text: "Atur tugas minggu ini" }, d);
+    expect(d.updateTask).not.toHaveBeenCalled();
+    const saved = (d.savePendingTaskPlan as any).mock.calls[0][2];
+    expect(saved.kind).toBe("week");
+    expect(saved.ops).toEqual([
+      { op: "update", taskId: "t1", title: "Revisi bab 2", due_date: planWeekDue },
+    ]);
+    expect(reply).toContain("Revisi bab 2");
+    expect(reply).toContain("jangan");
+    expect(reply).not.toContain("missing");
+  });
+
+  it("applies every stored update on ya and on iyaa serius without Gemini", async () => {
+    const plan = {
+      kind: "week" as const,
+      createdAt: Date.now(),
+      ops: [
+        { op: "update" as const, taskId: "t1", title: "Revisi bab 2", due_date: "2026-10-08" },
+        { op: "update" as const, taskId: "t2", title: "Bab 3", due_date: "2026-10-09" },
+      ],
+    };
+    for (const text of ["ya", "Iyaa serius"]) {
+      const d = deps({ getPendingTaskPlan: vi.fn(async () => plan) });
+      const reply = await handleUserMessage(env, 123, config, { text }, d);
+      expect(d.generateChatReply).not.toHaveBeenCalled();
+      expect(d.updateTask).toHaveBeenNthCalledWith(1, config, "t1", { due_date: "2026-10-08" });
+      expect(d.updateTask).toHaveBeenNthCalledWith(2, config, "t2", { due_date: "2026-10-09" });
+      expect(d.clearPendingTaskPlan).toHaveBeenCalledWith(env, 123);
+      expect(reply).toContain("Berhasil 2");
+    }
+  });
+
+  it("discards a stored plan on jangan without writes", async () => {
+    const plan = {
+      kind: "learn" as const,
+      createdAt: Date.now(),
+      ops: [{ op: "create" as const, title: "ROS basics", due_date: "2026-10-06", priority: "Medium" as const }],
+    };
+    const d = deps({ getPendingTaskPlan: vi.fn(async () => plan) });
+    const reply = await handleUserMessage(env, 123, config, { text: "jangan" }, d);
+    expect(d.createTask).not.toHaveBeenCalled();
+    expect(d.clearPendingTaskPlan).toHaveBeenCalledWith(env, 123);
+    expect(reply).toContain("Tidak ada tugas");
+  });
+
+  it("creates learn tasks on ya and keeps the plan when every write fails", async () => {
+    const plan = {
+      kind: "learn" as const,
+      createdAt: Date.now(),
+      ops: [{ op: "create" as const, title: "ROS basics", due_date: "2026-10-06", priority: "Medium" as const }],
+    };
+    const d = deps({
+      getPendingTaskPlan: vi.fn(async () => plan),
+      createTask: vi.fn(async () => { throw new Error("notion down"); }),
+    });
+    const reply = await handleUserMessage(env, 123, config, { text: "ya" }, d);
+    expect(d.updateTask).not.toHaveBeenCalled();
+    expect(d.clearPendingTaskPlan).not.toHaveBeenCalled();
+    expect(reply).toContain("Gagal");
+    expect(reply).toContain("ROS basics");
+  });
+
+  it("clears the plan after a partial apply and names the failure", async () => {
+    const plan = {
+      kind: "learn" as const,
+      createdAt: Date.now(),
+      ops: [
+        { op: "create" as const, title: "ROS basics", due_date: "2026-10-06", priority: "Medium" as const },
+        { op: "create" as const, title: "Topics", due_date: "2026-10-07", priority: "Medium" as const },
+      ],
+    };
+    const d = deps({
+      getPendingTaskPlan: vi.fn(async () => plan),
+      createTask: vi.fn(async (_c: unknown, task: { task: string }) => {
+        if (task.task === "Topics") throw new Error("notion down");
+        return "id";
+      }) as any,
+    });
+    const reply = await handleUserMessage(env, 123, config, { text: "ya" }, d);
+    expect(d.clearPendingTaskPlan).toHaveBeenCalledWith(env, 123);
+    expect(reply).toContain("Berhasil 1");
+    expect(reply).toContain("Topics");
+  });
+
+  it("does not apply a plan older than 30 minutes", async () => {
+    const plan = {
+      kind: "week" as const,
+      createdAt: Date.now() - 31 * 60 * 1000,
+      ops: [{ op: "update" as const, taskId: "t1", title: "Revisi bab 2", due_date: "2026-10-08" }],
+    };
+    const d = deps({
+      getPendingTaskPlan: vi.fn(async () => plan),
+      generateChatReply: vi.fn(async () => ({ type: "text", text: "Halo" })) as any,
+    });
+    await handleUserMessage(env, 123, config, { text: "ya" }, d);
+    expect(d.updateTask).not.toHaveBeenCalled();
+    expect(d.clearPendingTaskPlan).toHaveBeenCalledWith(env, 123);
+    expect(d.generateChatReply).toHaveBeenCalled();
+  });
+
+  it("does not start a plan while a delete confirmation is pending", async () => {
+    const d = deps({
+      getPendingDelete: vi.fn(async () => ({
+        kind: "tasks" as const,
+        ids: ["task-9"],
+        summary: "Revisi",
+        createdAt: Date.now(),
+      })),
+    });
+    const reply = await handleUserMessage(env, 123, config, { text: "ya" }, d);
+    expect(d.savePendingTaskPlan).not.toHaveBeenCalled();
+    expect(d.generateChatReply).not.toHaveBeenCalled();
+    expect(d.archiveTask).toHaveBeenCalledWith(config, "task-9");
+    expect(reply).toContain("menghapus");
+  });
+
+  it("blocks task writes while a fresh plan is waiting", async () => {
+    const plan = {
+      kind: "week" as const,
+      createdAt: Date.now(),
+      ops: [{ op: "update" as const, taskId: "t1", title: "Revisi bab 2", due_date: "2026-10-08" }],
+    };
+    const d = deps({
+      getPendingTaskPlan: vi.fn(async () => plan),
+      generateChatReply: vi.fn().mockResolvedValueOnce({
+        type: "function_calls",
+        calls: [{ name: "create_notion_task", args: { title: "Lain", priority: "Low" } }],
+      }) as any,
+    });
+    const reply = await handleUserMessage(env, 123, config, { text: "tambah tugas lain" }, d);
+    expect(d.createTask).not.toHaveBeenCalled();
+    expect(reply).toContain("ya");
+    expect(reply).toContain("jangan");
+  });
+
+  it("rejects propose_task_plan in a group", async () => {
+    const d = deps({
+      generateChatReply: vi.fn().mockResolvedValueOnce({
+        type: "function_calls",
+        calls: [{ name: "propose_task_plan", args: { kind: "learn", ops: [
+          { op: "create", title: "ROS", due_date: "2026-10-06" },
+        ] } }],
+      }) as any,
+    });
+    const reply = await handleUserMessage(env, 123, config, { text: "belajar ROS dalam 30 hari", chatContext: "group" }, d);
+    expect(d.savePendingTaskPlan).not.toHaveBeenCalled();
+    expect(reply.toLowerCase()).toContain("pribadi");
+  });
+
+  it("blocks update_notion_task while a fresh plan is waiting", async () => {
+    const plan = {
+      kind: "week" as const,
+      createdAt: Date.now(),
+      ops: [{ op: "update" as const, taskId: "t1", title: "Revisi bab 2", due_date: "2026-10-08" }],
+    };
+    const d = deps({
+      getPendingTaskPlan: vi.fn(async () => plan),
+      generateChatReply: vi.fn().mockResolvedValueOnce({
+        type: "function_calls",
+        calls: [{ name: "update_notion_task", args: { taskId: "t1", due_date: "2026-10-09" } }],
+      }) as any,
+    });
+    const reply = await handleUserMessage(env, 123, config, { text: "ubah tenggatnya" }, d);
+    expect(d.updateTask).not.toHaveBeenCalled();
+    expect(reply).toContain("jangan");
+  });
+
+  it("leaves a fresh plan stored when the message is neither ya nor jangan", async () => {
+    const plan = {
+      kind: "week" as const,
+      createdAt: Date.now(),
+      ops: [{ op: "update" as const, taskId: "t1", title: "Revisi bab 2", due_date: "2026-10-08" }],
+    };
+    const d = deps({
+      getPendingTaskPlan: vi.fn(async () => plan),
+      generateChatReply: vi.fn(async () => ({ type: "text", text: "Halo" })) as any,
+    });
+    await handleUserMessage(env, 123, config, { text: "halo" }, d);
+    expect(d.clearPendingTaskPlan).not.toHaveBeenCalled();
+    expect(d.updateTask).not.toHaveBeenCalled();
+    expect(d.generateChatReply).toHaveBeenCalled();
+  });
+
+  it("does not save a week plan when there are no active tasks", async () => {
+    const d = deps({
+      listActiveTasks: vi.fn(async () => []),
+      generateChatReply: vi.fn().mockResolvedValueOnce({
+        type: "function_calls",
+        calls: [{ name: "propose_task_plan", args: { kind: "week", ops: [
+          { op: "update", taskId: "t1", due_date: planWeekDue },
+        ] } }],
+      }) as any,
+    });
+    const reply = await handleUserMessage(env, 123, config, { text: "Atur tugas minggu ini" }, d);
+    expect(d.savePendingTaskPlan).not.toHaveBeenCalled();
+    expect(reply).toContain("Tidak ada tugas aktif");
+  });
+
+  it("asks for a day count and does not save a learn plan", async () => {
+    const d = deps({
+      generateChatReply: vi.fn().mockResolvedValueOnce({
+        type: "function_calls",
+        calls: [{ name: "propose_task_plan", args: { kind: "learn", ops: [
+          { op: "create", title: "ROS basics", due_date: learnWindow(new Date(), 30).startDate },
+        ] } }],
+      }) as any,
+    });
+    const reply = await handleUserMessage(env, 123, config, { text: "saya ingin belajar ROS" }, d);
+    expect(d.savePendingTaskPlan).not.toHaveBeenCalled();
+    expect(reply).toContain("Berapa hari");
+  });
+
+  it("stores at most 8 learn creates and says the rest were cut", async () => {
+    const today = learnWindow(new Date(), 30).startDate;
+    const d = deps({
+      listActiveTasks: vi.fn(async () => []),
+      generateChatReply: vi.fn().mockResolvedValueOnce({
+        type: "function_calls",
+        calls: [{ name: "propose_task_plan", args: { kind: "learn", ops: Array.from({ length: 9 }, (_, i) => ({
+          op: "create",
+          title: `Langkah ${i + 1}`,
+          due_date: today,
+        })) } }],
+      }) as any,
+    });
+    const reply = await handleUserMessage(env, 123, config, { text: "belajar ROS dalam 30 hari" }, d);
+    const saved = (d.savePendingTaskPlan as any).mock.calls[0][2];
+    expect(saved.ops).toHaveLength(8);
+    expect(d.createTask).not.toHaveBeenCalled();
+    expect(reply).toContain("dipotong karena batas 8");
   });
 });

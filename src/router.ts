@@ -1,6 +1,6 @@
 import { generateChatReply, generateTaskBriefing, GeminiApiError } from "./gemini";
 import type { ChatReply } from "./gemini";
-import { NotionRejectionError, NotionUnknownError, createNote, createTask, listActiveTasks, listProjects, getAllTasks, getAllNotes, listMemoryContext, recallMemory, upsertMemory, getAllMemory, updateTask, archiveTask, archiveProject, createProject, updateProject, listGoals, createGoal, updateGoal, archiveGoal, listLearning, createLearning, updateLearning, archiveLearning, addRoutine, createFinanceRecord, listFinanceRecords, archiveFinanceRecord } from "./notion";
+import { NotionRejectionError, NotionUnknownError, createNote, createTask, listActiveTasks, listProjects, getAllTasks, getAllNotes, listMemoryContext, recallMemory, upsertMemory, getAllMemory, updateTask, archiveTask, archiveProject, createProject, updateProject, listGoals, createGoal, updateGoal, archiveGoal, listLearning, createLearning, updateLearning, archiveLearning, addRoutine, createFinanceRecord, listFinanceRecords, archiveFinanceRecord, createHealthRecord, listHealthRecords, createCareerRecord, listCareerRecords, createReflectionRecord } from "./notion";
 import { detectBriefingRequest, selectBriefingTasks, emptyBriefingReply } from "./task-intelligence";
 import {
   getInteractionId,
@@ -17,6 +17,9 @@ import {
   getPendingTaskPlan,
   savePendingTaskPlan,
   clearPendingTaskPlan,
+  getPendingReflection,
+  savePendingReflection,
+  clearPendingReflection,
   getConversationContext,
   saveConversationContext,
   clearConversationContext,
@@ -35,15 +38,18 @@ import {
   financeDeleteSourceText,
   inferFinanceDeleteFilter,
 } from "./action-safety";
+import { applyBrainPolish } from "./brain-polish";
 import type { PendingDelete, PendingMemory } from "./action-safety";
 import { applyTopicSwitch, detectExplicitTopicSwitch, type ConversationContext } from "./conversation-context";
-import { parseIndonesianDeadline, parseIndonesianNaturalDate, parseDeadlineReply, formatISOWithOffset, nowWib } from "./date";
+import { parseIndonesianDeadline, parseIndonesianNaturalDate, parseDeadlineReply, formatISOWithOffset, nowWib, currentWibWeekRange, getJakartaDateParts, formatJakartaDateWithOffset } from "./date";
+import { asHealthKind, formatHealthSummary, formatReflectionProposal, isPendingReflectionFresh, normalizeEvidenceUrl, reflectionGaps } from "./life-log";
+import type { ReflectionDraft } from "./life-log";
 import { extractProjectMention, findExactProject, matchProject } from "./project-match";
 import { formatProjectList, formatProjectStatus } from "./project-intelligence";
 import { findExactGoal, matchGoal } from "./goal-match";
 import { findExactLearning, matchLearning } from "./learning-match";
 import { formatLearningList } from "./learning-format";
-import { validateWeekPlan, validateLearnPlan, formatPlanReply, isPendingPlanFresh } from "./task-plan";
+import { validateWeekPlan, validateLearnPlan, formatPlanReply, isPendingPlanFresh, learningPlanText } from "./task-plan";
 import type { AppConfig, Env, GoalRecord, LearningRecord, ProjectRecord } from "./types";
 
 export function sanitizeMarkdown(text: string): string {
@@ -54,6 +60,7 @@ export interface RouterDeps {
   createNote: typeof createNote; createTask: typeof createTask; listActiveTasks: typeof listActiveTasks; listProjects: typeof listProjects; getAllTasks: typeof getAllTasks; getAllNotes: typeof getAllNotes;
   upsertMemory: typeof upsertMemory; recallMemory: typeof recallMemory; listMemoryContext: typeof listMemoryContext; getAllMemory: typeof getAllMemory; updateTask: typeof updateTask; archiveTask: typeof archiveTask; archiveProject: typeof archiveProject; createProject: typeof createProject; updateProject: typeof updateProject; listGoals: typeof listGoals; createGoal: typeof createGoal; updateGoal: typeof updateGoal; archiveGoal: typeof archiveGoal; listLearning: typeof listLearning; createLearning: typeof createLearning; updateLearning: typeof updateLearning; archiveLearning: typeof archiveLearning; addRoutine: typeof addRoutine;
   createFinanceRecord: typeof createFinanceRecord; listFinanceRecords: typeof listFinanceRecords; archiveFinanceRecord: typeof archiveFinanceRecord;
+  createHealthRecord: typeof createHealthRecord; listHealthRecords: typeof listHealthRecords; createCareerRecord: typeof createCareerRecord; listCareerRecords: typeof listCareerRecords; createReflectionRecord: typeof createReflectionRecord;
   generateChatReply: typeof generateChatReply;
   parseIndonesianDeadline: typeof parseIndonesianDeadline;
   parseIndonesianNaturalDate: typeof parseIndonesianNaturalDate;
@@ -62,6 +69,7 @@ export interface RouterDeps {
   getPendingDelete: typeof getPendingDelete; savePendingDelete: typeof savePendingDelete; clearPendingDelete: typeof clearPendingDelete;
   getPendingMemory: typeof getPendingMemory; savePendingMemory: typeof savePendingMemory; clearPendingMemory: typeof clearPendingMemory;
   getPendingTaskPlan: typeof getPendingTaskPlan; savePendingTaskPlan: typeof savePendingTaskPlan; clearPendingTaskPlan: typeof clearPendingTaskPlan;
+  getPendingReflection: typeof getPendingReflection; savePendingReflection: typeof savePendingReflection; clearPendingReflection: typeof clearPendingReflection;
   getConversationContext: typeof getConversationContext;
   saveConversationContext: typeof saveConversationContext;
   clearConversationContext: typeof clearConversationContext;
@@ -69,10 +77,10 @@ export interface RouterDeps {
 }
 const defaultDeps: RouterDeps = {
   createNote, createTask, listActiveTasks, listProjects, getAllTasks, getAllNotes, upsertMemory, recallMemory, listMemoryContext, getAllMemory, updateTask, archiveTask, archiveProject, createProject, updateProject, listGoals, createGoal, updateGoal, archiveGoal, listLearning, createLearning, updateLearning, archiveLearning, addRoutine,
-  createFinanceRecord, listFinanceRecords, archiveFinanceRecord,
+  createFinanceRecord, listFinanceRecords, archiveFinanceRecord, createHealthRecord, listHealthRecords, createCareerRecord, listCareerRecords, createReflectionRecord,
   generateChatReply, parseIndonesianDeadline, parseIndonesianNaturalDate, getInteractionId, saveInteractionId, getChatLog, saveChatLog, clearMemory,
   getPendingDelete, savePendingDelete, clearPendingDelete, getPendingMemory, savePendingMemory, clearPendingMemory,
-  getPendingTaskPlan, savePendingTaskPlan, clearPendingTaskPlan,
+  getPendingTaskPlan, savePendingTaskPlan, clearPendingTaskPlan, getPendingReflection, savePendingReflection, clearPendingReflection,
   getConversationContext, saveConversationContext, clearConversationContext,
   generateTaskBriefing,
 };
@@ -273,6 +281,30 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
         const failLine = failed.length ? ` Gagal: ${failed.join(", ")}.` : "";
         return `Berhasil ${success} tugas.${failLine}${skipLine}`;
       }
+
+      const pendingReflection = await deps.getPendingReflection(env, userId);
+      if (pendingReflection && !isPendingReflectionFresh(pendingReflection)) {
+        await deps.clearPendingReflection(env, userId);
+      } else if (pendingReflection && isNegativeDeleteConfirm(normalizedText)) {
+        await deps.clearPendingReflection(env, userId);
+        return "Ok, batal. Review minggu ini tidak disimpan.";
+      } else if (pendingReflection && isPositiveDeleteConfirm(normalizedText)) {
+        try {
+          await deps.createReflectionRecord(config, {
+            name: `Minggu ${pendingReflection.weekStart}`,
+            learned: pendingReflection.learned,
+            built: pendingReflection.built,
+            income: pendingReflection.income,
+            timeWasted: pendingReflection.timeWasted,
+            improve: pendingReflection.improve,
+            date: pendingReflection.weekStart,
+          });
+          await deps.clearPendingReflection(env, userId);
+          return "Review minggu ini sudah disimpan.";
+        } catch {
+          return 'Gagal menyimpan review. Balas "ya" lagi untuk coba ulang, atau "jangan" untuk batal.';
+        }
+      }
     }
 
     if (!isGroup && detectBriefingRequest(normalizedText)) {
@@ -305,6 +337,9 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
     let learning: LearningRecord[] = [];
     let learningLoaded = false;
     const financeEnabled = Boolean(config.notionFinanceDataSourceId);
+    const healthEnabled = Boolean(config.notionHealthDataSourceId);
+    const careerEnabled = Boolean(config.notionCareerDataSourceId);
+    const reflectionEnabled = Boolean(config.notionReflectionDataSourceId);
 
     const [tasks, memories, previousInteractionId, chatLog, loadedProjects, loadedGoals, loadedLearning] = isGroup
       ? [[], [], null as string | null, await deps.getChatLog(env, userId), [] as ProjectRecord[], [] as GoalRecord[], [] as LearningRecord[]]
@@ -442,6 +477,9 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
               ...(learningEnabled && !isGroup ? { learning } : {}),
               learningEnabled: learningEnabled && !isGroup,
               financeEnabled: financeEnabled && !isGroup,
+              healthEnabled: healthEnabled && !isGroup,
+              careerEnabled: careerEnabled && !isGroup,
+              reflectionEnabled: reflectionEnabled && !isGroup,
               chatContext: isGroup ? "group" : "dm",
               conversation: isGroup ? null : conversationContext,
             },
@@ -519,10 +557,12 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
           break;
         }
         const replyMessages: string[] = [];
-        const filtered = filterCreateTaskCalls(reply.calls, payload.text);
-        if (filtered.blocked && filtered.clarifyMessage) {
-          replyMessages.push(filtered.clarifyMessage);
-        }
+        const polished = applyBrainPolish(reply.calls, payload.text);
+        const filtered = polished.handled
+          ? { allowed: polished.allowed, blocked: false, clarifyMessage: undefined }
+          : filterCreateTaskCalls(polished.allowed, payload.text);
+        if (polished.clarifyMessage) replyMessages.push(polished.clarifyMessage);
+        else if (filtered.blocked && filtered.clarifyMessage) replyMessages.push(filtered.clarifyMessage);
         const callsToProcess = filtered.allowed;
         let pendingDeleteSavedThisTurn = false;
         let pendingMemorySavedThisTurn = false;
@@ -1302,6 +1342,108 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
                 );
                 break;
               }
+              case "create_notion_health": {
+                if (isGroup || !config.notionHealthDataSourceId) {
+                  replyMessages.push("Health belum dikonfigurasi.");
+                  break;
+                }
+                const kind = asHealthKind(typeof call.args.kind === "string" ? call.args.kind : undefined);
+                const name = typeof call.args.name === "string" && call.args.name.trim() ? call.args.name.trim() : kind;
+                const rawDate = typeof call.args.date === "string" ? call.args.date.trim() : "";
+                const todayParts = getJakartaDateParts(new Date());
+                const date = /^\d{4}-\d{2}-\d{2}/.test(rawDate)
+                  ? rawDate.slice(0, 10)
+                  : formatJakartaDateWithOffset(todayParts.year, todayParts.month, todayParts.day, 0);
+                const hours = typeof call.args.hours === "number" && Number.isFinite(call.args.hours) ? call.args.hours : undefined;
+                const notes = typeof call.args.notes === "string" && call.args.notes.trim() ? call.args.notes.trim() : undefined;
+                await deps.createHealthRecord(config, { name, kind, date, ...(hours !== undefined ? { hours } : {}), ...(notes ? { notes } : {}) });
+                replyMessages.push(`Catatan kesehatan '${name}' (${kind}) sudah disimpan.`);
+                break;
+              }
+              case "read_notion_health": {
+                if (isGroup || !config.notionHealthDataSourceId) {
+                  replyMessages.push("Health belum dikonfigurasi.");
+                  break;
+                }
+                const kind = call.args.kind === "Workout" || call.args.kind === "Sleep" || call.args.kind === "Other" ? call.args.kind : undefined;
+                const records = await deps.listHealthRecords(config, {
+                  ...(typeof call.args.startDate === "string" ? { startDate: call.args.startDate } : {}),
+                  ...(typeof call.args.endDate === "string" ? { endDate: call.args.endDate } : {}),
+                  ...(kind ? { kind } : {}),
+                });
+                replyMessages.push(formatHealthSummary(records));
+                break;
+              }
+              case "create_notion_career": {
+                if (isGroup || !config.notionCareerDataSourceId) {
+                  replyMessages.push("Career belum dikonfigurasi.");
+                  break;
+                }
+                const url = normalizeEvidenceUrl(typeof call.args.url === "string" ? call.args.url : undefined);
+                if (!url) {
+                  replyMessages.push("Sertakan tautan http atau https untuk evidence itu.");
+                  break;
+                }
+                const name = typeof call.args.name === "string" && call.args.name.trim() ? call.args.name.trim() : "Evidence";
+                const rawDate = typeof call.args.date === "string" ? call.args.date.trim() : "";
+                const todayParts = getJakartaDateParts(new Date());
+                const date = /^\d{4}-\d{2}-\d{2}/.test(rawDate)
+                  ? rawDate.slice(0, 10)
+                  : formatJakartaDateWithOffset(todayParts.year, todayParts.month, todayParts.day, 0);
+                const notes = typeof call.args.notes === "string" && call.args.notes.trim() ? call.args.notes.trim() : undefined;
+                await deps.createCareerRecord(config, { name, url, date, ...(notes ? { notes } : {}) });
+                replyMessages.push(`Evidence '${name}' sudah disimpan.`);
+                break;
+              }
+              case "read_notion_career": {
+                if (isGroup || !config.notionCareerDataSourceId) {
+                  replyMessages.push("Career belum dikonfigurasi.");
+                  break;
+                }
+                const records = await deps.listCareerRecords(config, {
+                  ...(typeof call.args.startDate === "string" ? { startDate: call.args.startDate } : {}),
+                  ...(typeof call.args.endDate === "string" ? { endDate: call.args.endDate } : {}),
+                });
+                if (records.length === 0) {
+                  replyMessages.push("Belum ada evidence karier.");
+                  break;
+                }
+                replyMessages.push(records.map((record) => `${record.name} — ${record.url}`).join("\n"));
+                break;
+              }
+              case "propose_reflection": {
+                if (isGroup || !config.notionReflectionDataSourceId) {
+                  replyMessages.push("Reflection belum dikonfigurasi.");
+                  break;
+                }
+                const pendingDelete = await deps.getPendingDelete(env, userId);
+                if (pendingDelete && isPendingDeleteFresh(pendingDelete)) {
+                  replyMessages.push('Selesaikan konfirmasi hapus dulu. Balas "ya" atau "jangan".');
+                  break;
+                }
+                const waitingPlan = await deps.getPendingTaskPlan(env, userId);
+                if (waitingPlan && isPendingPlanFresh(waitingPlan)) {
+                  replyMessages.push('Masih ada rencana tugas yang menunggu. Balas "ya" atau "jangan" dulu.');
+                  break;
+                }
+                const draft: ReflectionDraft = {
+                  learned: typeof call.args.learned === "string" ? call.args.learned : "",
+                  built: typeof call.args.built === "string" ? call.args.built : "",
+                  income: typeof call.args.income === "string" ? call.args.income : "",
+                  timeWasted: typeof call.args.timeWasted === "string" ? call.args.timeWasted : "",
+                  improve: typeof call.args.improve === "string" ? call.args.improve : "",
+                  weekStart: currentWibWeekRange(new Date()).startDate,
+                  createdAt: Date.now(),
+                };
+                const gaps = reflectionGaps(draft);
+                if (gaps.length > 0) {
+                  replyMessages.push(`Review belum lengkap: ${gaps.join(", ")}.`);
+                  break;
+                }
+                await deps.savePendingReflection(env, userId, draft);
+                replyMessages.push(formatReflectionProposal(draft));
+                break;
+              }
               case "propose_task_plan": {
                 if (isGroup) {
                   replyMessages.push("Rencana tugas hanya di chat pribadi.");
@@ -1313,8 +1455,9 @@ export async function handleUserMessage(env: Env, userId: number | string, confi
                   break;
                 }
                 const rawOps = Array.isArray(call.args.ops) ? call.args.ops : [];
+                const learnText = learningPlanText(normalizedText, currentLog);
                 const validation = call.args.kind === "learn"
-                  ? validateLearnPlan(normalizedText, tasks, rawOps, new Date())
+                  ? validateLearnPlan(learnText, tasks, rawOps, new Date())
                   : validateWeekPlan(normalizedText, tasks, rawOps, new Date());
                 if (!validation.ok) {
                   replyMessages.push(validation.message);

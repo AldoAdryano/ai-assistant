@@ -1,4 +1,4 @@
-import type { AppConfig, FinanceRecord, GoalRecord, LearningRecord, MemoryCategory, MemoryRecord, NoteType, Priority, ProjectRecord, RoutineRecord, TaskRecord } from "./types";
+import type { AppConfig, CareerRecord, FinanceRecord, GoalRecord, HealthKind, HealthRecord, LearningRecord, MemoryCategory, MemoryRecord, NoteType, Priority, ProjectRecord, ReflectionRecord, RoutineRecord, TaskRecord } from "./types";
 import { normalizeFinanceDate, normalizeNotionDue, stripDeadlineLeakFromTitle, nowWib, getJakartaDateParts } from "./date";
 
 export const TASK_PROJECT_PROPERTY = "Project";
@@ -976,4 +976,159 @@ export async function listFinanceRecords(
     .slice(0, FINANCE_MAX_ITEMS)
     .map(mapFinanceRecord)
     .filter((record): record is FinanceRecord => record !== null);
+}
+
+async function queryLifePages(
+  config: AppConfig,
+  dataSourceId: string,
+  filterConditions: unknown[],
+  fetchImpl: typeof fetch,
+): Promise<any[]> {
+  const pages: any[] = [];
+  let startCursor: string | undefined;
+  let hasMore = true;
+  while (hasMore && pages.length < 300) {
+    const body: Record<string, unknown> = { page_size: 100 };
+    if (filterConditions.length === 1) body.filter = filterConditions[0];
+    else if (filterConditions.length > 1) body.filter = { and: filterConditions };
+    if (startCursor) body.start_cursor = startCursor;
+    const result = await notionRequest<{ results: any[]; next_cursor: string | null; has_more: boolean }>(
+      config,
+      `/data_sources/${dataSourceId}/query`,
+      { method: "POST", body: JSON.stringify(body) },
+      fetchImpl,
+    );
+    pages.push(...result.results ?? []);
+    hasMore = Boolean(result.has_more) && Boolean(result.next_cursor);
+    startCursor = result.next_cursor ?? undefined;
+  }
+  return pages.slice(0, 300);
+}
+
+function dateFilter(startDate?: string, endDate?: string): unknown[] {
+  const conditions: unknown[] = [];
+  if (startDate) conditions.push({ property: "Date", date: { on_or_after: startDate } });
+  if (endDate) conditions.push({ property: "Date", date: { on_or_before: endDate } });
+  return conditions;
+}
+
+function mapHealthRecord(page: any): HealthRecord | null {
+  const name = titleText(page.properties?.Name);
+  const kind = page.properties?.Kind?.select?.name;
+  const date = page.properties?.Date?.date?.start;
+  if (!name || (kind !== "Workout" && kind !== "Sleep" && kind !== "Other") || !date) return null;
+  const hours = page.properties?.Hours?.number;
+  const notes = richText(page.properties?.Notes) || undefined;
+  return {
+    id: page.id,
+    name,
+    kind,
+    date,
+    ...(typeof hours === "number" ? { hours } : {}),
+    ...(notes ? { notes } : {}),
+  };
+}
+
+export async function createHealthRecord(
+  config: AppConfig,
+  payload: Omit<HealthRecord, "id">,
+  fetchImpl: typeof fetch = fetch,
+): Promise<HealthRecord> {
+  if (!config.notionHealthDataSourceId) throw new NotionRejectionError("Health data source is not configured");
+  const properties: Record<string, unknown> = {
+    Name: { title: textItems(payload.name) },
+    Kind: { select: { name: payload.kind } },
+    Date: { date: { start: payload.date } },
+  };
+  if (payload.hours !== undefined) properties.Hours = { number: payload.hours };
+  if (payload.notes) properties.Notes = { rich_text: textItems(payload.notes) };
+  const result = await notionRequest<any>(config, "/pages", {
+    method: "POST",
+    body: JSON.stringify({ parent: { type: "data_source_id", data_source_id: config.notionHealthDataSourceId }, properties }),
+  }, fetchImpl);
+  return mapHealthRecord(result) ?? { id: result.id, ...payload };
+}
+
+export async function listHealthRecords(
+  config: AppConfig,
+  filter?: { startDate?: string; endDate?: string; kind?: HealthKind },
+  fetchImpl: typeof fetch = fetch,
+): Promise<HealthRecord[]> {
+  if (!config.notionHealthDataSourceId) return [];
+  const conditions = dateFilter(filter?.startDate, filter?.endDate);
+  if (filter?.kind) conditions.push({ property: "Kind", select: { equals: filter.kind } });
+  const pages = await queryLifePages(config, config.notionHealthDataSourceId, conditions, fetchImpl);
+  return pages.map(mapHealthRecord).filter((record): record is HealthRecord => record !== null);
+}
+
+function mapCareerRecord(page: any): CareerRecord | null {
+  const name = titleText(page.properties?.Name);
+  const url = page.properties?.URL?.url;
+  const date = page.properties?.Date?.date?.start;
+  if (!name || typeof url !== "string" || !date) return null;
+  const notes = richText(page.properties?.Notes) || undefined;
+  return { id: page.id, name, url, date, ...(notes ? { notes } : {}) };
+}
+
+export async function createCareerRecord(
+  config: AppConfig,
+  payload: Omit<CareerRecord, "id">,
+  fetchImpl: typeof fetch = fetch,
+): Promise<CareerRecord> {
+  if (!config.notionCareerDataSourceId) throw new NotionRejectionError("Career data source is not configured");
+  const properties: Record<string, unknown> = {
+    Name: { title: textItems(payload.name) },
+    URL: { url: payload.url },
+    Date: { date: { start: payload.date } },
+  };
+  if (payload.notes) properties.Notes = { rich_text: textItems(payload.notes) };
+  const result = await notionRequest<any>(config, "/pages", {
+    method: "POST",
+    body: JSON.stringify({ parent: { type: "data_source_id", data_source_id: config.notionCareerDataSourceId }, properties }),
+  }, fetchImpl);
+  return mapCareerRecord(result) ?? { id: result.id, ...payload };
+}
+
+export async function listCareerRecords(
+  config: AppConfig,
+  filter?: { startDate?: string; endDate?: string },
+  fetchImpl: typeof fetch = fetch,
+): Promise<CareerRecord[]> {
+  if (!config.notionCareerDataSourceId) return [];
+  const pages = await queryLifePages(config, config.notionCareerDataSourceId, dateFilter(filter?.startDate, filter?.endDate), fetchImpl);
+  return pages.map(mapCareerRecord).filter((record): record is CareerRecord => record !== null);
+}
+
+function mapReflectionRecord(page: any): ReflectionRecord | null {
+  const name = titleText(page.properties?.Name);
+  const learned = richText(page.properties?.Learned);
+  const built = richText(page.properties?.Built);
+  const income = richText(page.properties?.Income);
+  const timeWasted = richText(page.properties?.["Time Wasted"]);
+  const improve = richText(page.properties?.Improve);
+  const date = page.properties?.Date?.date?.start;
+  if (!name || !learned || !date) return null;
+  return { id: page.id, name, learned, built, income, timeWasted, improve, date };
+}
+
+export async function createReflectionRecord(
+  config: AppConfig,
+  payload: Omit<ReflectionRecord, "id">,
+  fetchImpl: typeof fetch = fetch,
+): Promise<ReflectionRecord> {
+  if (!config.notionReflectionDataSourceId) throw new NotionRejectionError("Reflection data source is not configured");
+  const properties: Record<string, unknown> = {
+    Name: { title: textItems(payload.name) },
+    Learned: { rich_text: textItems(payload.learned) },
+    Built: { rich_text: textItems(payload.built) },
+    Income: { rich_text: textItems(payload.income) },
+    "Time Wasted": { rich_text: textItems(payload.timeWasted) },
+    Improve: { rich_text: textItems(payload.improve) },
+    Date: { date: { start: payload.date } },
+  };
+  const result = await notionRequest<any>(config, "/pages", {
+    method: "POST",
+    body: JSON.stringify({ parent: { type: "data_source_id", data_source_id: config.notionReflectionDataSourceId }, properties }),
+  }, fetchImpl);
+  return mapReflectionRecord(result) ?? { id: result.id, ...payload };
 }

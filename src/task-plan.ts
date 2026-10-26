@@ -24,6 +24,26 @@ export function parseLearningDays(text: string): number | null {
   return n;
 }
 
+/** Current message, else a bare count after "Berapa hari?", else a recent user line that already said N hari. */
+export function learningPlanText(currentText: string, conversationLog: string): string {
+  if (parseLearningDays(currentText) !== null) return currentText;
+  const lines = conversationLog.split("\n");
+  const lastBot = [...lines].reverse().find((line) => line.startsWith("Bot: "));
+  const bare = currentText.trim().match(/^(\d{1,3})$/);
+  if (bare && lastBot?.includes("Berapa hari?")) {
+    const n = Number(bare[1]);
+    if (Number.isInteger(n) && n >= 1 && n <= 90) return `${n} hari`;
+  }
+  const earlierUsers = lines.filter((line) => line.startsWith("User: ")).slice(0, -1).slice(-3);
+  const shortFollowUp = currentText.trim().length < 40 && !/\b(belajar|atur|susun|urutkan)\b/i.test(currentText);
+  if (!shortFollowUp) return currentText;
+  for (let i = earlierUsers.length - 1; i >= 0; i--) {
+    const text = earlierUsers[i]!.slice("User: ".length);
+    if (parseLearningDays(text) !== null) return text;
+  }
+  return currentText;
+}
+
 export function learnWindow(now: Date, days: number): { startDate: string; endDate: string } {
   const parts = getJakartaDateParts(now);
   return {

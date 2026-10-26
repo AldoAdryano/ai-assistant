@@ -243,4 +243,44 @@ describe("Scheduled Alarm Reader (Task 53.1)", () => {
     );
     expect(mockDeps.generateProactiveAlarm).not.toHaveBeenCalled();
   });
+
+  it("queues one Sunday evening reflection nudge when chat is idle", async () => {
+    vi.setSystemTime(new Date("2026-10-11T12:30:00Z"));
+    const store = new Map<string, string>();
+    const kv = {
+      get: vi.fn(async (key: string) => store.get(key) ?? null),
+      put: vi.fn(async (key: string, value: string) => { store.set(key, value); }),
+      delete: vi.fn(),
+      list: vi.fn(),
+    };
+    mockDeps.getUpcomingTasks.mockResolvedValue([]);
+    const nudgeEnv = { ...env, DEDUP_KV: kv, NOTION_REFLECTION_DATA_SOURCE_ID: "ref-1" };
+    await runScheduled({} as any, nudgeEnv as any, {} as any, mockDeps as any);
+    expect(JSON.parse(store.get("pending_alarms") || "[]").join("\n")).toContain("review minggu ini");
+    expect(store.get("reflection_nudge:2026-10-05")).toBe("1");
+
+    await runScheduled({} as any, nudgeEnv as any, {} as any, mockDeps as any);
+    expect(JSON.parse(store.get("pending_alarms") || "[]")).toHaveLength(1);
+  });
+
+  it("does not nudge during a fresh recipe topic", async () => {
+    vi.setSystemTime(new Date("2026-10-11T12:30:00Z"));
+    const store = new Map<string, string>();
+    store.set("conversation_context:62812", JSON.stringify({
+      currentTopic: "resep nasi goreng",
+      previousTopic: null,
+      activeTaskHint: null,
+      updatedAt: Date.now(),
+    }));
+    const kv = {
+      get: vi.fn(async (key: string) => store.get(key) ?? null),
+      put: vi.fn(async (key: string, value: string) => { store.set(key, value); }),
+      delete: vi.fn(),
+      list: vi.fn(),
+    };
+    mockDeps.getUpcomingTasks.mockResolvedValue([]);
+    await runScheduled({} as any, { ...env, DEDUP_KV: kv, NOTION_REFLECTION_DATA_SOURCE_ID: "ref-1" } as any, {} as any, mockDeps as any);
+    expect(store.has("pending_alarms")).toBe(false);
+    expect(store.has("reflection_nudge:2026-10-05")).toBe(false);
+  });
 });

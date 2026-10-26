@@ -4,6 +4,7 @@ import {
   PENDING_PLAN_FRESH_MS,
   formatPlanReply,
   isPendingPlanFresh,
+  learningPlanText,
   learnWindow,
   parseLearningDays,
   userMentionsPriority,
@@ -24,6 +25,22 @@ describe("parseLearningDays", () => {
     expect(parseLearningDays("belajar 2 jam sehari selama 30 hari")).toBe(30);
     expect(parseLearningDays("belajar 1 hari")).toBe(1);
     expect(parseLearningDays("belajar 90 hari")).toBe(90);
+  });
+
+  it("keeps N from an earlier line when the reply is only oke or a bare count", () => {
+    const log = [
+      "User: Saya ingin belajar ros dalam 30 hari",
+      "Bot: Tunggu sebentar, aku buatkan rencana",
+      "User: Oke",
+    ].join("\n");
+    expect(learningPlanText("Oke", log)).toBe("Saya ingin belajar ros dalam 30 hari");
+    const asked = [
+      log,
+      "Bot: Berapa hari? Sebut jumlahnya, misalnya 30 hari.",
+      "User: 30",
+    ].join("\n");
+    expect(learningPlanText("30", asked)).toBe("30 hari");
+    expect(learningPlanText("saya ingin belajar ROS", "User: saya ingin belajar ROS")).toBe("saya ingin belajar ROS");
   });
 
   it("returns null when missing or outside 1-90", () => {

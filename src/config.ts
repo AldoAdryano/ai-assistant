@@ -7,6 +7,10 @@ function required(name: keyof Env, value: unknown): string {
   return value;
 }
 
+function optionalId(value: unknown): string | null {
+  return typeof value === "string" && value.trim() !== "" ? value.trim() : null;
+}
+
 /** Strip @s.whatsapp.net / @lid / device suffix → comparable local id */
 export function normalizeWhatsappIdentity(raw: string): string {
   const local = String(raw || "")
@@ -79,6 +83,9 @@ export function getConfig(env: Env): AppConfig {
       typeof env.NOTION_FINANCE_DATA_SOURCE_ID === "string" && env.NOTION_FINANCE_DATA_SOURCE_ID.trim() !== ""
         ? env.NOTION_FINANCE_DATA_SOURCE_ID.trim()
         : null,
+    notionHealthDataSourceId: optionalId(env.NOTION_HEALTH_DATA_SOURCE_ID),
+    notionCareerDataSourceId: optionalId(env.NOTION_CAREER_DATA_SOURCE_ID),
+    notionReflectionDataSourceId: optionalId(env.NOTION_REFLECTION_DATA_SOURCE_ID),
     telegramBotToken: required("TELEGRAM_BOT_TOKEN", env.TELEGRAM_BOT_TOKEN),
     telegramWebhookSecret,
     allowedTelegramUserId,

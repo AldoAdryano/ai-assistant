@@ -39,6 +39,11 @@ function deps(overrides: Partial<RouterDeps> = {}): RouterDeps {
     createFinanceRecord: vi.fn(async () => ({ id: "finance-id" })) as any,
     listFinanceRecords: vi.fn(async () => []) as any,
     archiveFinanceRecord: vi.fn(async () => undefined),
+    createHealthRecord: vi.fn(async () => ({ id: "health-id", name: "strength", kind: "Workout" as const, date: "2026-10-06" })),
+    listHealthRecords: vi.fn(async () => []),
+    createCareerRecord: vi.fn(async () => ({ id: "career-id", name: "IoT", url: "https://example.com", date: "2026-10-06" })),
+    listCareerRecords: vi.fn(async () => []),
+    createReflectionRecord: vi.fn(async () => ({ id: "ref-id", name: "Minggu", learned: "a", built: "b", income: "c", timeWasted: "d", improve: "e", date: "2026-10-05" })),
     generateChatReply: vi.fn(async () => ({ type: "text", text: "Jawaban AI" }) as any),
     parseIndonesianDeadline: vi.fn(() => ({ kind: "none" })) as any,
     parseIndonesianNaturalDate: vi.fn(() => null) as any,
@@ -56,6 +61,9 @@ function deps(overrides: Partial<RouterDeps> = {}): RouterDeps {
     getPendingTaskPlan: vi.fn(async () => null),
     savePendingTaskPlan: vi.fn(async () => undefined),
     clearPendingTaskPlan: vi.fn(async () => undefined),
+    getPendingReflection: vi.fn(async () => null),
+    savePendingReflection: vi.fn(async () => undefined),
+    clearPendingReflection: vi.fn(async () => undefined),
     getConversationContext: vi.fn(async () => null),
     saveConversationContext: vi.fn(async () => undefined),
     clearConversationContext: vi.fn(async () => undefined),
@@ -2962,6 +2970,41 @@ describe("task plan confirmation (DM)", () => {
     expect(reply).toContain("Berapa hari");
   });
 
+  it("uses an earlier 30 hari when the follow-up is only Oke", async () => {
+    const today = learnWindow(new Date(), 30).startDate;
+    const d = deps({
+      getChatLog: vi.fn(async () => "User: Saya ingin belajar ros dalam 30 hari\nBot: Tunggu sebentar, aku buatkan rencana"),
+      listActiveTasks: vi.fn(async () => []),
+      generateChatReply: vi.fn().mockResolvedValueOnce({
+        type: "function_calls",
+        calls: [{ name: "propose_task_plan", args: { kind: "learn", ops: [
+          { op: "create", title: "ROS basics", due_date: today },
+        ] } }],
+      }) as any,
+    });
+    const reply = await handleUserMessage(env, 123, config, { text: "Oke" }, d);
+    expect(d.savePendingTaskPlan).toHaveBeenCalled();
+    expect(reply).toContain("ROS basics");
+    expect(reply).not.toContain("Berapa hari");
+  });
+
+  it("accepts a bare day count after asking berapa hari", async () => {
+    const today = learnWindow(new Date(), 30).startDate;
+    const d = deps({
+      getChatLog: vi.fn(async () => "User: Saya ingin belajar ros dalam 30 hari\nBot: Berapa hari? Sebut jumlahnya, misalnya 30 hari."),
+      listActiveTasks: vi.fn(async () => []),
+      generateChatReply: vi.fn().mockResolvedValueOnce({
+        type: "function_calls",
+        calls: [{ name: "propose_task_plan", args: { kind: "learn", ops: [
+          { op: "create", title: "ROS basics", due_date: today },
+        ] } }],
+      }) as any,
+    });
+    const reply = await handleUserMessage(env, 123, config, { text: "30" }, d);
+    expect(d.savePendingTaskPlan).toHaveBeenCalled();
+    expect(reply).toContain("ROS basics");
+  });
+
   it("stores at most 8 learn creates and says the rest were cut", async () => {
     const today = learnWindow(new Date(), 30).startDate;
     const d = deps({
@@ -2980,5 +3023,117 @@ describe("task plan confirmation (DM)", () => {
     expect(saved.ops).toHaveLength(8);
     expect(d.createTask).not.toHaveBeenCalled();
     expect(reply).toContain("dipotong karena batas 8");
+  });
+
+  it("logs a sleep entry instead of creating a task", async () => {
+    const healthConfig = { notionHealthDataSourceId: "health-1" } as AppConfig;
+    const d = deps({
+      generateChatReply: vi.fn().mockResolvedValueOnce({
+        type: "function_calls",
+        calls: [{ name: "create_notion_health", args: { name: "tidur", kind: "Sleep", hours: 7 } }],
+      }) as any,
+    });
+    const reply = await handleUserMessage(env, 123, healthConfig, { text: "tidur 7 jam" }, d);
+    expect(d.createTask).not.toHaveBeenCalled();
+    expect(d.createHealthRecord).toHaveBeenCalledWith(healthConfig, expect.objectContaining({
+      name: "tidur",
+      kind: "Sleep",
+      hours: 7,
+    }));
+    expect(reply).toContain("kesehatan");
+  });
+
+  it("saves career evidence and refuses a missing url", async () => {
+    const careerConfig = { notionCareerDataSourceId: "career-1" } as AppConfig;
+    const d = deps({
+      generateChatReply: vi.fn().mockResolvedValueOnce({
+        type: "function_calls",
+        calls: [{ name: "create_notion_career", args: { name: "Portfolio IoT", url: "bukan-tautan" } }],
+      }) as any,
+    });
+    const reply = await handleUserMessage(env, 123, careerConfig, { text: "tambah evidence portfolio IoT" }, d);
+    expect(d.createCareerRecord).not.toHaveBeenCalled();
+    expect(reply).toContain("https");
+  });
+
+  it("stores a reflection until ya, then writes it once", async () => {
+    const reflectionConfig = { notionReflectionDataSourceId: "ref-1" } as AppConfig;
+    const d = deps({
+      generateChatReply: vi.fn().mockResolvedValueOnce({
+        type: "function_calls",
+        calls: [{ name: "propose_reflection", args: {
+          learned: "MQTT",
+          built: "simulasi",
+          income: "tidak ada",
+          timeWasted: "scroll",
+          improve: "tidur lebih awal",
+        } }],
+      }) as any,
+    });
+    const proposed = await handleUserMessage(env, 123, reflectionConfig, { text: "review minggu ini" }, d);
+    expect(d.createReflectionRecord).not.toHaveBeenCalled();
+    expect(d.savePendingReflection).toHaveBeenCalled();
+    expect(proposed).toContain("jangan");
+
+    const draft = (d.savePendingReflection as any).mock.calls[0][2];
+    const confirmDeps = deps({ getPendingReflection: vi.fn(async () => draft) });
+    const saved = await handleUserMessage(env, 123, reflectionConfig, { text: "ya" }, confirmDeps);
+    expect(confirmDeps.createReflectionRecord).toHaveBeenCalledWith(reflectionConfig, expect.objectContaining({
+      learned: "MQTT",
+      date: draft.weekStart,
+    }));
+    expect(confirmDeps.clearPendingReflection).toHaveBeenCalled();
+    expect(saved).toContain("sudah disimpan");
+  });
+
+  it("does not save a reflection while a task plan is waiting", async () => {
+    const reflectionConfig = { notionReflectionDataSourceId: "ref-1" } as AppConfig;
+    const d = deps({
+      getPendingTaskPlan: vi.fn(async () => ({
+        kind: "week" as const,
+        createdAt: Date.now(),
+        ops: [{ op: "update" as const, taskId: "t1", title: "Revisi", due_date: "2026-10-08" }],
+      })),
+      generateChatReply: vi.fn().mockResolvedValueOnce({
+        type: "function_calls",
+        calls: [{ name: "propose_reflection", args: {
+          learned: "a", built: "b", income: "c", timeWasted: "d", improve: "e",
+        } }],
+      }) as any,
+    });
+    const reply = await handleUserMessage(env, 123, reflectionConfig, { text: "review minggu ini" }, d);
+    expect(d.savePendingReflection).not.toHaveBeenCalled();
+    expect(reply).toContain("jangan");
+  });
+
+  it("turns a named build into a project instead of a task burst", async () => {
+    const projectsConfig = { notionProjectsDataSourceId: "projects-ds" } as AppConfig;
+    const d = deps({
+      generateChatReply: vi.fn().mockResolvedValueOnce({
+        type: "function_calls",
+        calls: [
+          { name: "create_notion_project", args: { name: "Smart Room Monitor" } },
+          { name: "create_notion_task", args: { title: "Beli sensor" } },
+          { name: "create_notion_task", args: { title: "Gambar skema" } },
+        ],
+      }) as any,
+    });
+    const reply = await handleUserMessage(env, 123, projectsConfig, { text: "Mau bikin Smart Room Monitor" }, d);
+    expect(d.createProject).toHaveBeenCalled();
+    expect(d.createTask).not.toHaveBeenCalled();
+    expect(reply).not.toContain("satu tugas atau beberapa");
+  });
+
+  it("asks before inventing tasks from an ambiguous strategy", async () => {
+    const d = deps({
+      generateChatReply: vi.fn().mockResolvedValueOnce({
+        type: "function_calls",
+        calls: [1, 2, 3].map((i) => ({ name: "create_notion_task", args: { title: `Langkah ${i}` } })),
+      }) as any,
+    });
+    const reply = await handleUserMessage(env, 123, config, { text: "gimana strategi minggu ini" }, d);
+    expect(d.createTask).not.toHaveBeenCalled();
+    expect(d.createNote).not.toHaveBeenCalled();
+    expect(reply).toContain("Inbox");
   });
 });

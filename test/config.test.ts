@@ -87,4 +87,16 @@ describe("getConfig Telegram migration bridge", () => {
         };
         expect(getConfig(envWithoutFinance).notionFinanceDataSourceId).toBeNull();
     });
+
+    it("parses optional health, career, and reflection data source ids", () => {
+        const config = getConfig({
+            ...testEnv,
+            NOTION_HEALTH_DATA_SOURCE_ID: "health-ds",
+            NOTION_CAREER_DATA_SOURCE_ID: " career-ds ",
+            NOTION_REFLECTION_DATA_SOURCE_ID: "",
+        });
+        expect(config.notionHealthDataSourceId).toBe("health-ds");
+        expect(config.notionCareerDataSourceId).toBe("career-ds");
+        expect(config.notionReflectionDataSourceId).toBeNull();
+    });
 });

@@ -52,6 +52,8 @@ const BRAIN_V1_RULES = [
   "5. DILARANG mengarang due_date/due_time. Isi due_date HANYA jika Aldo menyebut tenggat/tanggal/jam di pesannya. Jika task jelas tapi tenggat belum disebut → create_notion_task TANPA due_date, isi content dengan detail, lalu TANYA tenggatnya.",
   "6. Task + deadline jelas dari user (policy B) → langsung create dengan due_date.",
   "7. Parallel multi-tool HANYA untuk aksi berbeda yang user minta secara eksplisit — bukan multi-create spekulatif dari satu topik.",
+  "8. Ide strategi yang belum jadi langkah konkret ('gimana strateginya', 'mulai dari mana', 'harusnya ngapain') → create_notion_note atau satu pertanyaan. JANGAN pecah jadi beberapa create_notion_task.",
+  "9. 'Mau/pengen bikin <nama>' tanpa tenggat dan tanpa kata tugas → SATU create_notion_project. Bukan daftar tugas. 'jadwalkan … besok' atau 'buat tugas' tetap task.",
 ].join(" ");
 
 const MEMORY_CATEGORY_ORDER: MemoryCategory[] = [
@@ -131,6 +133,26 @@ const GOALS_CRUD_RULES = [
   "4. delete_notion_goal: selalu panggil tool (sistem akan minta konfirmasi ya/jangan). Jangan arsip sendiri tanpa tool.",
 ].join(" ");
 
+const HEALTH_RULES = [
+  "HEALTH (DM only when tools tersedia):",
+  "1. Olahraga, workout, gym, tidur, atau jam tidur → create_notion_health. Jangan jadi Task atau Inbox.",
+  "2. 'jadwalkan gym besok' atau tenggat eksplisit → create_notion_task, bukan Health.",
+  "3. kind: Workout, Sleep, atau Other. hours angka untuk tidur. date YYYY-MM-DD, kosongkan kalau hari ini.",
+  "4. Ringkasan kesehatan minggu ini → read_notion_health dengan startDate dan endDate.",
+].join(" ");
+
+const CAREER_RULES = [
+  "CAREER (DM only):",
+  "1. Evidence atau portfolio dengan URL → create_notion_career. Bukan Task dan bukan daftar semua tugas.",
+  "2. url wajib http atau https. name judul singkat. date YYYY-MM-DD.",
+].join(" ");
+
+const REFLECTION_RULES = [
+  "REFLECTION (DM only):",
+  "1. 'review minggu ini' → propose_reflection dengan learned, built, income, timeWasted, dan improve. Jangan menulis Notion sendiri dan jangan buat 5 task.",
+  "2. Isi kelima bagian dari tugas, project, dan keuangan yang sudah disebut. Sistem menanyakan ya/jangan.",
+].join(" ");
+
 const FINANCE_RULES = [
   "FINANCE — LIFE OS Finance (DM only when tools tersedia):",
   "1. Pengeluaran/pemasukan/transaksi/uang masuk create_notion_finance atau read_notion_finance. Jangan jadi Task atau catatan Inbox.",
@@ -142,7 +164,7 @@ const FINANCE_RULES = [
 const PLANNER_RULES = [
   "TASK PLANNER (DM only):",
   "1. 'atur/susun/urutkan tugas minggu ini' → propose_task_plan kind=week dengan update ops. taskId wajib dari Active tasks. due_date YYYY-MM-DD di minggu WIB berjalan. Jangan create.",
-  "2. 'belajar X dalam N hari' → propose_task_plan kind=learn dengan create ops. Sebar due_date dari hari ini sampai hari ke-N. Jangan update. Jangan tulis Learning/Goal.",
+  "2. 'belajar X dalam N hari' → pada giliran yang SAMA wajib propose_task_plan kind=learn. Jangan hanya berjanji akan menyusun rencana. Sebar due_date dari hari ini sampai hari ke-N. Jangan update. Jangan tulis Learning/Goal.",
   "3. Satu sesi bertenggat ('belajar MQTT 30 menit malam ini') tetap create_notion_task, bukan planner.",
   "4. Jangan menulis Notion sendiri untuk rencana ini. Sistem menyimpan rencana dan menanyakan ya/jangan.",
 ].join(" ");
@@ -196,6 +218,9 @@ export async function generateChatReply(
     learning?: LearningRecord[];
     learningEnabled?: boolean;
     financeEnabled?: boolean;
+    healthEnabled?: boolean;
+    careerEnabled?: boolean;
+    reflectionEnabled?: boolean;
     chatContext?: "dm" | "group";
     conversation?: ConversationContext | null;
   },
@@ -255,6 +280,9 @@ export async function generateChatReply(
       ...(context.goalsEnabled ? [GOALS_CRUD_RULES] : []),
       ...(context.learningEnabled ? [LEARNING_RULES] : []),
       ...(context.financeEnabled ? [FINANCE_RULES] : []),
+      ...(context.healthEnabled ? [HEALTH_RULES] : []),
+      ...(context.careerEnabled ? [CAREER_RULES] : []),
+      ...(context.reflectionEnabled ? [REFLECTION_RULES] : []),
       PLANNER_RULES,
       "\nActive tasks:\n" + (taskLines.length ? taskLines.join("\n") : "- none"),
       "\nExplicit memory:\n" + memoryBlock,
@@ -647,6 +675,86 @@ export async function generateChatReply(
             },
             required: []
           }
+        },
+      ] : []),
+      ...(context.healthEnabled ? [
+        {
+          type: "function",
+          name: "create_notion_health",
+          description: "Logs a health entry (workout or sleep) in Notion Health. Not a task.",
+          parameters: {
+            type: "OBJECT",
+            properties: {
+              name: { type: "STRING", description: "Short label, e.g. strength or tidur." },
+              kind: { type: "STRING", enum: ["Workout", "Sleep", "Other"] },
+              hours: { type: "NUMBER", description: "Hours slept, or workout duration." },
+              date: { type: "STRING", description: "YYYY-MM-DD WIB. Omit for today." },
+              notes: { type: "STRING" },
+            },
+            required: ["name", "kind"],
+          },
+        },
+        {
+          type: "function",
+          name: "read_notion_health",
+          description: "Reads health entries. Use for a weekly health summary.",
+          parameters: {
+            type: "OBJECT",
+            properties: {
+              startDate: { type: "STRING" },
+              endDate: { type: "STRING" },
+              kind: { type: "STRING", enum: ["Workout", "Sleep", "Other"] },
+            },
+            required: [],
+          },
+        },
+      ] : []),
+      ...(context.careerEnabled ? [
+        {
+          type: "function",
+          name: "create_notion_career",
+          description: "Saves one career evidence item with a URL. Not a task dump.",
+          parameters: {
+            type: "OBJECT",
+            properties: {
+              name: { type: "STRING" },
+              url: { type: "STRING", description: "http(s) evidence link." },
+              date: { type: "STRING", description: "YYYY-MM-DD." },
+              notes: { type: "STRING" },
+            },
+            required: ["name", "url"],
+          },
+        },
+        {
+          type: "function",
+          name: "read_notion_career",
+          description: "Lists career evidence.",
+          parameters: {
+            type: "OBJECT",
+            properties: {
+              startDate: { type: "STRING" },
+              endDate: { type: "STRING" },
+            },
+            required: [],
+          },
+        },
+      ] : []),
+      ...(context.reflectionEnabled ? [
+        {
+          type: "function",
+          name: "propose_reflection",
+          description: "Proposes a weekly reflection for Aldo to confirm. Does not write Notion until he says ya.",
+          parameters: {
+            type: "OBJECT",
+            properties: {
+              learned: { type: "STRING" },
+              built: { type: "STRING" },
+              income: { type: "STRING" },
+              timeWasted: { type: "STRING" },
+              improve: { type: "STRING" },
+            },
+            required: ["learned", "built", "income", "timeWasted", "improve"],
+          },
         },
       ] : []),
       {

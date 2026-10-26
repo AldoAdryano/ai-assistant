@@ -108,7 +108,9 @@ Seed yang dipakai:
 
 ### Fase 4 — Finance + Health capture v1
 
-**Finance Capture v1: ✅ selesai (2026-10-06).** Spek `docs/superpowers/specs/2026-10-05-youyou-finance-v1-design.md`. Health belum mulai.
+**Finance Capture v1: ✅ selesai (2026-10-06).** Spek `docs/superpowers/specs/2026-10-05-youyou-finance-v1-design.md`.
+
+**Health Capture v1: ✅ di kode (2026-10-06).** Aktif bila `NOTION_HEALTH_DATA_SOURCE_ID` diisi. "Jadwalkan gym besok" tetap Task.
 
 **Tujuan:** dua kebiasaan PDF yang sering terlewat: uang & tubuh.
 
@@ -132,11 +134,15 @@ Kerjakan sebagai **satu spek** atau dua mini-spek berurutan (Finance dulu jika i
 | Career | “tambah evidence portfolio IoT: \<url\>” | Bukan dump semua task |
 | Reflection | “review minggu ini” / cron opsional Minggu malam | Template: Learned, Built, Income, Time Wasted, Improve Next Week; Youyou boleh draft dari tasks/projects/finance lalu konfirmasi sebelum tulis |
 
+**Career + Reflection v1: ✅ di kode (2026-10-06).** Aktif bila `NOTION_CAREER_DATA_SOURCE_ID` dan `NOTION_REFLECTION_DATA_SOURCE_ID` diisi. Reflection menunggu satu "ya" sebelum ditulis.
+
 **Definition of done:** satu Reflection tersimpan setelah konfirmasi; Career entry dengan evidence link.
 
 ---
 
 ### Fase 6 — LIFE OS Brain polish (opsional, setelah 1–5)
+
+**Brain polish: ✅ di kode (2026-10-06).** "Mau bikin X" jadi project, strategi ambigu jadi Inbox atau satu pertanyaan, nudge reflection hanya Minggu malam WIB dan diam kalau topik obrolan masih segar.
 
 Perluas decision tree Brain untuk lapisan strategi (tanpa merusak anti-nag Context Manager):
 
@@ -190,5 +196,5 @@ Asumsi: 1 fase inti / sesi fokus (bukan hari kalender kaku).
 
 ## Next action
 
-1. Brainstorm + spek **Health capture** (sisa Fase 4). Finance Capture v1 sudah di kode.
-2. Setelah Health: Fase 5 Career + Reflection.
+1. Uji DM: "tidur 7 jam", evidence https, "review minggu ini", "Mau bikin Smart Room Monitor", dan "gimana strategi minggu ini".
+2. Roadmap 1–6 sudah di kode. Berikutnya hanya yang di luar daftar ini.

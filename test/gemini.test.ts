@@ -670,3 +670,37 @@ it("includes propose_task_plan in DM and omits it in group", async () => {
   expect(groupBody.tools).toBeUndefined();
   expect(groupBody.systemInstruction.parts[0].text).not.toContain("TASK PLANNER");
 });
+
+it("includes health, career, and reflection tools only in DM when enabled", async () => {
+  let requestBody: any;
+  const fakeFetch: typeof fetch = async (_input, init) => {
+    requestBody = JSON.parse(String(init?.body));
+    return interaction("Siap.");
+  };
+  await generateChatReply(config, { text: "tidur 7 jam" }, {
+    tasks: [],
+    memories: [],
+    healthEnabled: true,
+    careerEnabled: true,
+    reflectionEnabled: true,
+  }, undefined, fakeFetch);
+  const names = requestBody.tools[0].functionDeclarations.map((t: { name: string }) => t.name);
+  expect(names).toContain("create_notion_health");
+  expect(names).toContain("create_notion_career");
+  expect(names).toContain("propose_reflection");
+  expect(requestBody.systemInstruction.parts[0].text).toContain("jadwalkan gym besok");
+  expect(requestBody.systemInstruction.parts[0].text).toContain("SATU create_notion_project");
+
+  let groupBody: any;
+  const groupFetch: typeof fetch = async (_input, init) => {
+    groupBody = JSON.parse(String(init?.body));
+    return interaction("Siap.");
+  };
+  await generateChatReply(config, { text: "tidur 7 jam" }, {
+    tasks: [],
+    memories: [],
+    chatContext: "group",
+    healthEnabled: true,
+  }, undefined, groupFetch);
+  expect(groupBody.tools).toBeUndefined();
+});

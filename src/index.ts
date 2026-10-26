@@ -5,6 +5,9 @@ import { extractTelegramMessage, isTelegramWebhookSecretValid, sendTelegramText,
 import { getUpcomingTasks, getActiveRoutines, listMemoryContext } from "./notion";
 import { generateChatReply, generateProactiveAlarm, generateRoutineAlarm, generateTaskBriefing } from "./gemini";
 import { isDailyReminderSlot, selectBriefingTasks, selectUrgentTasks, mergeAlarmTaskLists } from "./task-intelligence";
+import { currentWibWeekRange } from "./date";
+import { getConversationContext } from "./state";
+import { decideReflectionNudge, reflectionNudgeText } from "./reflection-nudge";
 
 async function queueAlarm(env: Env, msg: string) {
   try {
@@ -121,6 +124,26 @@ export async function runScheduled(event: ScheduledController, env: Env, ctx: Ex
     if (routinesToRemind.length > 0) {
       const routineMsg = await deps.generateRoutineAlarm(config, routinesToRemind, { tasks, memories });
       await queueAlarm(env, routineMsg);
+    }
+
+    if (config.notionReflectionDataSourceId) {
+      const weekStart = currentWibWeekRange(new Date(nowMs)).startDate;
+      const nudgeKey = `reflection_nudge:${weekStart}`;
+      const [alreadySent, whatsappCtx, telegramCtx] = await Promise.all([
+        env.DEDUP_KV.get(nudgeKey),
+        getConversationContext(env, config.allowedWhatsappNumber),
+        getConversationContext(env, config.allowedTelegramUserId),
+      ]);
+      const nudge = decideReflectionNudge({
+        now: new Date(nowMs),
+        reflectionEnabled: true,
+        alreadySent: Boolean(alreadySent),
+        contexts: [whatsappCtx, telegramCtx],
+      });
+      if (nudge.send) {
+        await queueAlarm(env, reflectionNudgeText(nudge.weekStart));
+        await env.DEDUP_KV.put(nudgeKey, "1", { expirationTtl: 8 * 86400 });
+      }
     }
 
   } catch (error) {

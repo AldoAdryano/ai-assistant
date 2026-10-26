@@ -12,6 +12,9 @@ const mockConfigUnset = {
   notionApiKey: "secret-key",
   notionVersion: "2026-03-11",
   notionFinanceDataSourceId: null,
+  notionHealthDataSourceId: null,
+  notionCareerDataSourceId: null,
+  notionReflectionDataSourceId: null,
 } as AppConfig;
 
 describe("Notion Finance API", () => {

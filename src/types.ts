@@ -32,6 +32,9 @@ export interface Env {
   NOTION_GOALS_DATA_SOURCE_ID?: string;
   NOTION_LEARNING_DATA_SOURCE_ID?: string;
   NOTION_FINANCE_DATA_SOURCE_ID?: string;
+  NOTION_HEALTH_DATA_SOURCE_ID?: string;
+  NOTION_CAREER_DATA_SOURCE_ID?: string;
+  NOTION_REFLECTION_DATA_SOURCE_ID?: string;
 
   GEMINI_MODEL: string;
   NOTION_VERSION: string;
@@ -57,6 +60,9 @@ export interface AppConfig {
   notionGoalsDataSourceId: string | null;
   notionLearningDataSourceId: string | null;
   notionFinanceDataSourceId: string | null;
+  notionHealthDataSourceId: string | null;
+  notionCareerDataSourceId: string | null;
+  notionReflectionDataSourceId: string | null;
   telegramBotToken: string;
   telegramWebhookSecret: string;
   allowedTelegramUserId: string;
@@ -140,6 +146,36 @@ export interface FinanceRecord {
   category: string;
   date: string;
   notes?: string | null;
+}
+
+export type HealthKind = "Workout" | "Sleep" | "Other";
+
+export interface HealthRecord {
+  id: string;
+  name: string;
+  kind: HealthKind;
+  date: string;
+  hours?: number;
+  notes?: string;
+}
+
+export interface CareerRecord {
+  id: string;
+  name: string;
+  url: string;
+  date: string;
+  notes?: string;
+}
+
+export interface ReflectionRecord {
+  id: string;
+  name: string;
+  learned: string;
+  built: string;
+  income: string;
+  timeWasted: string;
+  improve: string;
+  date: string;
 }
 
 export interface TaskRecord {

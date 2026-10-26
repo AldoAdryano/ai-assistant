@@ -1,6 +1,7 @@
 import type { PendingDelete, PendingMemory } from "./action-safety";
 import type { ConversationContext } from "./conversation-context";
 import type { PendingTaskPlan } from "./task-plan";
+import type { ReflectionDraft } from "./life-log";
 import type { Env, NormalizedTaskResult } from "./types";
 
 const TTL_SECONDS = 3600;
@@ -170,5 +171,28 @@ export async function clearMemory(env: Env, userId: number | string): Promise<vo
     env.DEDUP_KV.delete(getPendingDeleteKey(userId)),
     env.DEDUP_KV.delete(getPendingMemoryKey(userId)),
     env.DEDUP_KV.delete(getPendingTaskPlanKey(userId)),
+    env.DEDUP_KV.delete(getPendingReflectionKey(userId)),
   ]);
+}
+
+function getPendingReflectionKey(userId: number | string): string {
+  return `pending_reflection:${userId}`;
+}
+
+export async function savePendingReflection(env: Env, userId: number | string, draft: ReflectionDraft): Promise<void> {
+  await env.DEDUP_KV.put(getPendingReflectionKey(userId), JSON.stringify(draft), { expirationTtl: TTL_SECONDS });
+}
+
+export async function getPendingReflection(env: Env, userId: number | string): Promise<ReflectionDraft | null> {
+  const data = await env.DEDUP_KV.get(getPendingReflectionKey(userId));
+  if (!data) return null;
+  try {
+    return JSON.parse(data) as ReflectionDraft;
+  } catch {
+    return null;
+  }
+}
+
+export async function clearPendingReflection(env: Env, userId: number | string): Promise<void> {
+  await env.DEDUP_KV.delete(getPendingReflectionKey(userId));
 }
